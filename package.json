@@ -1,0 +1,12 @@
+{
+  "name": "mcserv-controller",
+  "version": "0.0.1-alpha-1",
+  "description": "Minecraft Server Controller with Node.js",
+  "license": "CC-BY-NC-SA-4.0",
+  "author": "Ho9tocraft/Exellia Aware",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}

@@ -1,0 +1,43 @@
+{
+    "servers": [
+        {
+            "id": "forge_gregtech",
+            "work": {
+                "jvmPath": "/usr/lib/jvm/java-8-openjdk-amd64/bin/java",
+                "jvmArgs": {
+                    "memory": {
+                        "Xmx": { "amount": 48, "unit": "G" },
+                        "Xms": { "amount": 48, "unit": "G" }
+                    },
+                    "extra": "-XX:+UnlockExperimentalVMOptions -XX:MaxNewSize=8G -Xmn8G -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:+UseTLAB -XX:MaxGCPauseMillis=200 -XX:InitiatingHeapOccupancyPercent=50 -XX:+UseFastAccessorMethods -XX:+AggressiveOpts -XX:G1NewSizePercent=40 -XX:G1MaxNewSizePercent=50 -XX:G1HeapRegionSize=16M -XX:G1ReservePercent=15 -XX:+UseBiasedLocking -XX:+UseStringDeduplication -XX:MetaspaceSize=16G -XX:MaxMetaspaceSize=16G -Xss8G -XX:-UseGCOverheadLimit -XX:+DisableExplicitGC -XX:ParallelGCThreads=16 -XX:ConcGCThreads=16"
+                },
+                "jarFile": "forge-1.7.10-10.13.4.1614-1.7.10-universal.jar",
+                "jarArgs": "nogui -Dfml.queryResult=confirm",
+                "rcon": {
+                    "port": 25574,
+                    "passwdMode": "default",
+                    "passwd": "eyJwYXNzcGhyYXNlIjoiNTI2YTQ1Nzc0ZTdhNDU3NzUyMzM0YTZjNWEzMTUyNmM1OTMyNjczZCIsInBhc3N3b3JkIjoiVTJGc2RHVmtYMTl0N1d6WThDTk5oK1lKMTJRdVZYTjlUZEs1cUlicUF3M0p4L0dlWW5nbHRqWkxNM0JaWjJKWjNacDdaODJtcHRXaG8yTi9sRG5KanNzNldSaHBjMjhwVi9sdkNtKy9uSXc9In0="
+                }
+            },
+            "process": {
+                "runningStatus": "STOPPED",
+                "maintenanceMode": true,
+                "scheduleTime": {
+                    "serverExecStart": "0 10 7 * * *",
+                    "override": {
+                        "dayReboot": {
+                            "doOverride": false,
+                            "motd": "",
+                            "exec": ""
+                        },
+                        "weeklyShutdown": {
+                            "doOverride": false,
+                            "motd": "",
+                            "exec": ""
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
