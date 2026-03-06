@@ -20,7 +20,7 @@
                 }
             },
             "process": {
-                "runningStatus": "STOPPED",
+                "runningStatus": "UNDEFINED",
                 "maintenanceMode": true,
                 "scheduleTime": {
                     "serverExecStart": "0 10 7 * * *",

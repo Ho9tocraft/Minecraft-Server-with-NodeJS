@@ -63,6 +63,14 @@ export const outCipherKeyAndIV = (encPasswd, passphrase) => {
     return { key: keyiv.subarray(0, 32), iv: keyiv.subarray(32, 48), txt: cipherTxt };
 };
 
+/**
+ * Decrypt HexString-Base64 encripted string
+ * @param {string} raw HEX STRING
+ * @returns {string}
+ */
+export const decryptStringHexB64 = (raw) => {
+    return from(from(raw, 'hex').toString(), 'base64').toString();
+};
 
 /**
  * RCON Password Decrypt Functions
@@ -77,9 +85,9 @@ export const decryptRConPasswd = (srvData) => {
          * @type {RConJSONObject}
          */
         const decryptedJSON = parse(from(passwd, 'base64').toString());
-        const passphrase = from(from(decryptedJSON.passphrase, 'hex')).toString();
+        const passphrase = decryptStringHexB64(decryptedJSON.passphrase);
         const genKeyIv = outCipherKeyAndIV(decryptedJSON.password, passphrase);
         const decipher = createDecipheriv('aes-256-cbc', genKeyIv.key, genKeyIv.iv);
-        return from(from(concat([decipher.update(genKeyIv.txt), decipher.final()]), 'hex'), 'base64').toString();
+        return decryptStringHexB64(concat([decipher.update(genKeyIv.txt), decipher.final()]).toString());
     }
 };
