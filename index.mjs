@@ -3,9 +3,9 @@ import { decryptRConPasswd } from './js/minecraft/rcon_authorize.mjs';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 const { parse } = JSON;
-const { dirname: __dirname } = import.meta;
+const { main, dirname: __dirname } = import.meta;
 
-const main = () => {
+const runMain = () => {
     /**
      * @typedef {object} MinecraftServerData
      * @property {string} id
@@ -44,6 +44,6 @@ const main = () => {
     });
 };
 
-if (import.meta.main) {
-    main();
+if (main) {
+    runMain();
 }
