@@ -8,5 +8,31 @@
   "main": "index.mjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "argon2": "^0.44.0",
+    "chokidar": "^5.0.0",
+    "csurf": "^1.2.2",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "ejs": "^5.0.1",
+    "execa": "^9.6.1",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.3.0",
+    "express-session": "^1.19.0",
+    "fast-glob": "^3.3.3",
+    "fs-extra": "^11.3.4",
+    "helmet": "^8.1.0",
+    "jose": "^6.2.0",
+    "node-cron": "^4.2.1",
+    "otplib": "^13.3.0",
+    "pino": "^10.3.1",
+    "proper-lockfile": "^4.1.2",
+    "qrcode": "^1.5.4",
+    "rcon": "^1.1.0",
+    "session-file-store": "^1.5.0",
+    "tree-kill": "^1.2.2",
+    "write-file-atomic": "^7.0.1",
+    "ws": "^8.19.0"
   }
 }

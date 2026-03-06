@@ -2,3 +2,5 @@
 [Ee]xclude/*
 # デバッグなどで使用するファイル群
 [Dd]ata/server_data.json
+# NPM Package
+[Nn]ode_modules/*
