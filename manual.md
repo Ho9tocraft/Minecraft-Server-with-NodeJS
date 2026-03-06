@@ -20,7 +20,7 @@
   5. *rcon.password*を二重に変換した*16進数文字列*を、**OpenSSLを使って暗号化**。暗号化方式は*AES-256-CBC*で、Base64であり、必ずpbkdf2とパスフレーズを設定すること。  
     出てきた暗号(パスワード)は、必ず控えておくこと。コマンド例は以下の通り。
     ```bash
-    echo 54455354 | openssl enc -e -aes-256-cbc -base64 -k PASSPHRASE -pbkdf2
+    echo 54455354 | openssl enc -e -aes-256-cbc -base64 -k PASSPHRASE -pbkdf2 -iter 10000 -md sha256
     ```
   6. 暗号化の際に使ったパスフレーズを、外部サイトを使って**Base64**に変換。生成されたものを、続けて**16進数文字列**に変換。
   7. 簡素なJSON文字列を作成する。
