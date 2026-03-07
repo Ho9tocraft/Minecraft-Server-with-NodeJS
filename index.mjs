@@ -1,9 +1,18 @@
 'use strict';
 import { decryptRConPasswd } from './js/minecraft/rcon_authorize.mjs';
-import { readFileSync } from 'fs';
+import { loadServerDataJson } from './js/minecraft/server_inst_rw.mjs';
+import { decryptEncryptedString } from './js/mcsrvcon_utils/decrypt_utils.mjs';
 import { join } from 'path';
-const { parse } = JSON;
+import { parseArgs } from 'util';
 const { main, dirname: __dirname } = import.meta;
+
+const launchOptions = {
+    'launch-debug': {
+        type: 'boolean',
+        short: 'd'
+    }
+};
+const args = process.argv.slice(2);
 
 const runMain = () => {
     /**
@@ -38,12 +47,18 @@ const runMain = () => {
     /**
      * @type {{servers: MinecraftServerData[]}}
      */
-    const { servers } = parse(readFileSync(join(__dirname, './data/server_data.json'), { encoding: 'utf-8' }));
+    const { servers } = loadServerDataJson(join(__dirname, './data/server_data.json'));
     servers.forEach(server => {
         // server script loading
+        if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Loaded Server ID: ${server.id}`);
+        if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Target serverExecStart: ${server.process.scheduleTime.serverExecStart}`);
+        if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Decryption rcon.password: ${decryptRConPasswd(server)}`);
     });
+    if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Extra Words Decryption Evade test: ${decryptEncryptedString('54a+6IGW44Gu57WC5ruF5bm75oOz')}`);
 };
 
 if (main) {
+    const { values } = parseArgs({ args, options: launchOptions });
+    globalThis.DEBUG_MODE = values['launch-debug'];
     runMain();
 }

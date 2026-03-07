@@ -1,6 +1,7 @@
 'use strict';
 import { Buffer } from 'buffer';
 import { createDecipheriv, pbkdf2Sync } from 'crypto';
+import { decryptEncryptedString } from '../mcsrvcon_utils/decrypt_utils.mjs';
 const { parse } = JSON;
 const { from, concat } = Buffer;
 
@@ -64,15 +65,6 @@ export const outCipherKeyAndIV = (encPasswd, passphrase) => {
 };
 
 /**
- * Decrypt HexString-Base64 encripted string
- * @param {string} raw HEX STRING
- * @returns {string}
- */
-export const decryptStringHexB64 = (raw) => {
-    return from(from(raw, 'hex').toString(), 'base64').toString();
-};
-
-/**
  * RCON Password Decrypt Functions
  * @param {MinecraftServerData} srvData Server Data (JSON)
  * @returns {string}
@@ -84,10 +76,10 @@ export const decryptRConPasswd = (srvData) => {
         /**
          * @type {RConJSONObject}
          */
-        const decryptedJSON = parse(from(passwd, 'base64').toString());
-        const passphrase = decryptStringHexB64(decryptedJSON.passphrase);
+        const decryptedJSON = parse(decryptEncryptedString(passwd));
+        const passphrase = decryptEncryptedString(decryptedJSON.passphrase);
         const genKeyIv = outCipherKeyAndIV(decryptedJSON.password, passphrase);
         const decipher = createDecipheriv('aes-256-cbc', genKeyIv.key, genKeyIv.iv);
-        return decryptStringHexB64(concat([decipher.update(genKeyIv.txt), decipher.final()]).toString());
+        return decryptEncryptedString(concat([decipher.update(genKeyIv.txt), decipher.final()]).toString().trim());
     }
 };

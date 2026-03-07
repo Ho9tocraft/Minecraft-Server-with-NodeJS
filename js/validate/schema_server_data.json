@@ -1,0 +1,173 @@
+{
+    "$id": "https://strayed.site/schema/schema_server_data.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Server Instance Schema",
+    "type": "object",
+    "required": ["servers"],
+    "additionalProperties": false,
+    "properties": {
+        "servers": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": ["id", "work", "process"],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "pattern": "^[!-~]+$"
+                    },
+                    "work": {
+                        "type": "object",
+                        "required": ["jvmPath", "jvmArgs", "jarFile", "jarArgs", "rcon"],
+                        "additionalProperties": false,
+                        "properties": {
+                            "jvmPath": {
+                                "type": "string"
+                            },
+                            "jvmArgs": {
+                                "type": "object",
+                                "required": ["memory", "extra"],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "memory": {
+                                        "type": "object",
+                                        "required": ["Xmx", "Xms"],
+                                        "properties": {
+                                            "Xmx": {
+                                                "type": "object",
+                                                "required": ["amount", "unit"],
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                    "amount": {
+                                                        "type": "number"
+                                                    },
+                                                    "unit": {
+                                                        "type": "string",
+                                                        "pattern": "^[MG]$"
+                                                    }
+                                                }
+                                            },
+                                            "Xms": {
+                                                "type": "object",
+                                                "required": ["amount", "unit"],
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                    "amount": {
+                                                        "type": "number"
+                                                    },
+                                                    "unit": {
+                                                        "type": "string",
+                                                        "pattern": "^[MG]$"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "extra": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "jarFile": {
+                                "type": "string"
+                            },
+                            "jarArgs": {
+                                "type": "string"
+                            },
+                            "rcon": {
+                                "type": "object",
+                                "required": ["port", "passwdMode", "passwd"],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "port": {
+                                        "type": "number",
+                                        "minimum": 1,
+                                        "maximum": 65535
+                                    },
+                                    "passwdMode": {
+                                        "type": "string",
+                                        "pattern": "^(default|plaintext|aes)$"
+                                    },
+                                    "passwd": {
+                                        "type": "string",
+                                        "pattern": "^[!-~]+$"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "process": {
+                        "type": "object",
+                        "required": ["runningStatus", "maintenanceMode", "scheduleTime"],
+                        "additionalProperties": false,
+                        "properties": {
+                            "runningStatus": {
+                                "type": "string",
+                                "pattern": "^(UNDEFINED|STOPPED|RUNNING|CRASHED)$"
+                            },
+                            "maintenanceMode": {
+                                "type": "boolean"
+                            },
+                            "scheduleTime": {
+                                "type": "object",
+                                "required": ["serverExecStart", "override"],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "serverExecStart": {
+                                        "type": "string",
+                                        "pattern": "^([0-9]|[1-5][0-9]|\\*) ([0-9]|[1-5][0-9]|\\*) ([0-9]|1[0-9]|2[0-3]|\\*) ([0-9]|[1-2][0-9]|3[0-1]|\\*) ([1-9]|1[0-2]|\\*) ([0-7]|\\*)$"
+                                    },
+                                    "override": {
+                                        "type": "object",
+                                        "required": ["dayReboot", "weeklyShutdown"],
+                                        "additionalProperties": false,
+                                        "properties": {
+                                            "dayReboot": {
+                                                "type": "object",
+                                                "required": ["doOverride", "motd", "exec"],
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                    "doOverride": {
+                                                        "type": "boolean"
+                                                    },
+                                                    "motd": {
+                                                        "type": "string",
+                                                        "pattern": "^(|(([0-9]|[1-5][0-9]|\\*) ([0-9]|[1-5][0-9]|\\*) ([0-9]|1[0-9]|2[0-3]|\\*) ([0-9]|[1-2][0-9]|3[0-1]|\\*) ([1-9]|1[0-2]|\\*) ([0-7]|\\*)))$"
+                                                    },
+                                                    "exec": {
+                                                        "type": "string",
+                                                        "pattern": "^(|(([0-9]|[1-5][0-9]|\\*) ([0-9]|[1-5][0-9]|\\*) ([0-9]|1[0-9]|2[0-3]|\\*) ([0-9]|[1-2][0-9]|3[0-1]|\\*) ([1-9]|1[0-2]|\\*) ([0-7]|\\*)))$"
+                                                    }
+                                                }
+                                            },
+                                            "weeklyShutdown": {
+                                                "type": "object",
+                                                "required": ["doOverride", "motd", "exec"],
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                    "doOverride": {
+                                                        "type": "boolean"
+                                                    },
+                                                    "motd": {
+                                                        "type": "string",
+                                                        "pattern": "^(|(([0-9]|[1-5][0-9]|\\*) ([0-9]|[1-5][0-9]|\\*) ([0-9]|1[0-9]|2[0-3]|\\*) ([0-9]|[1-2][0-9]|3[0-1]|\\*) ([1-9]|1[0-2]|\\*) ([0-7]|\\*)))$"
+                                                    },
+                                                    "exec": {
+                                                        "type": "string",
+                                                        "pattern": "^(|(([0-9]|[1-5][0-9]|\\*) ([0-9]|[1-5][0-9]|\\*) ([0-9]|1[0-9]|2[0-3]|\\*) ([0-9]|[1-2][0-9]|3[0-1]|\\*) ([1-9]|1[0-2]|\\*) ([0-7]|\\*)))$"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
