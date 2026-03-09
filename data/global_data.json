@@ -1,5 +1,7 @@
 {
+    "version_info": "0.0.1-alpha-1",
     "global_data": {
+        "mcsRootDir": "/DataCenter/Minecraft",
         "maintenanceMode": true,
         "serverScheduleTime": {
             "dayReboot": {

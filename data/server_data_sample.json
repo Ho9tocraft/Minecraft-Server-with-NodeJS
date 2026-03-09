@@ -1,39 +1,41 @@
 {
     "servers": [
         {
-            "id": "forge_gregtech",
+            "id": "SERVER ID HERE",
+            "name": "SERVER NAME HERE",
+            "homeDir": "LAUNCH HOME DIR HERE",
             "work": {
-                "jvmPath": "/usr/lib/jvm/java-8-openjdk-amd64/bin/java",
+                "jvmPath": "JVM FULLPATH HERE",
                 "jvmArgs": {
                     "memory": {
-                        "Xmx": { "amount": 48, "unit": "G" },
-                        "Xms": { "amount": 48, "unit": "G" }
+                        "Xmx": { "amount": 4, "unit": "G" },
+                        "Xms": { "amount": 4, "unit": "G" }
                     },
-                    "extra": "-XX:+UnlockExperimentalVMOptions -XX:MaxNewSize=8G -Xmn8G -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:+UseTLAB -XX:MaxGCPauseMillis=200 -XX:InitiatingHeapOccupancyPercent=50 -XX:+UseFastAccessorMethods -XX:+AggressiveOpts -XX:G1NewSizePercent=40 -XX:G1MaxNewSizePercent=50 -XX:G1HeapRegionSize=16M -XX:G1ReservePercent=15 -XX:+UseBiasedLocking -XX:+UseStringDeduplication -XX:MetaspaceSize=16G -XX:MaxMetaspaceSize=16G -Xss8G -XX:-UseGCOverheadLimit -XX:+DisableExplicitGC -XX:ParallelGCThreads=16 -XX:ConcGCThreads=16"
+                    "extra": "JVM ARGS HERE"
                 },
-                "jarFile": "forge-1.7.10-10.13.4.1614-1.7.10-universal.jar",
-                "jarArgs": "nogui -Dfml.queryResult=confirm",
+                "jarFile": "LAUNCHING FILE HERE",
+                "jarArgs": "SERVER JAR LAUNCHING OPTION HERE",
                 "rcon": {
-                    "port": 25574,
+                    "port": 25575,
                     "passwdMode": "default",
-                    "passwd": "eyJwYXNzcGhyYXNlIjoiNTI2YTQ1Nzc0ZTdhNDU3NzUyMzM0YTZjNWEzMTUyNmM1OTMyNjczZCIsInBhc3N3b3JkIjoiVTJGc2RHVmtYMTl0N1d6WThDTk5oK1lKMTJRdVZYTjlUZEs1cUlicUF3M0p4L0dlWW5nbHRqWkxNM0JaWjJKWjNacDdaODJtcHRXaG8yTi9sRG5KanNzNldSaHBjMjhwVi9sdkNtKy9uSXc9In0="
+                    "passwd": "PASSWORD HERE"
                 }
             },
             "process": {
                 "runningStatus": "UNDEFINED",
                 "maintenanceMode": true,
                 "scheduleTime": {
-                    "serverExecStart": "0 10 7 * * *",
+                    "serverExecStart": "CRON STRING HERE",
                     "override": {
                         "dayReboot": {
                             "doOverride": false,
-                            "motd": "",
-                            "exec": ""
+                            "motd": "CRON STRING OR EMPTY HERE",
+                            "exec": "CRON STRING OR EMPTY HERE"
                         },
                         "weeklyShutdown": {
                             "doOverride": false,
-                            "motd": "",
-                            "exec": ""
+                            "motd": "CRON STRING OR EMPTY HERE",
+                            "exec": "CRON STRING OR EMPTY HERE"
                         }
                     }
                 }

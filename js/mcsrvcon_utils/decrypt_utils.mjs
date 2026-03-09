@@ -6,9 +6,6 @@ import { join } from 'path';
 import { TextDecoder } from 'util';
 const { dirname } = import.meta;
 const { from } = Buffer;
-import { createRequire } from 'module';
-const req = createRequire(import.meta.url);
-const lngdet = req('./../../node_modules/languagedetect/index.js');
 
 /**
  * 
@@ -25,6 +22,7 @@ const canMatchBinaryStr = (tstr) => {
  * @returns 
  */
 const detectHexspeak = (tstr) => {
+    if (typeof tstr !== 'string' || (typeof tstr === 'string' && tstr.trim().length === 0)) throw new TypeError('Not String');
     let detect = false;
     const hexspeakDefinedList = readFileSync(join(dirname, '../../data/excluding_hexspeak.txt'), { encoding: 'utf-8' }).split('\n');
     hexspeakDefinedList.forEach((hexspeakWord) => {
@@ -47,6 +45,7 @@ const detectHexspeak = (tstr) => {
  * @returns
  */
 const detectENWords = (tstr) => {
+    if (typeof tstr !== 'string' || (typeof tstr === 'string' && tstr.trim().length === 0)) throw new TypeError('Not String');
     let detect = false;
     daleChall.forEach((word) => {
         if (word.trim() === tstr.trim().toLowerCase()) {
@@ -57,22 +56,31 @@ const detectENWords = (tstr) => {
     });
     return detect;
 };
+/**
+ * その文字列をデコードしたときに可読可能になるかを検知します。
+ * @param {string} tstr テストする文字列。
+ * @returns 可読可能の真偽(true/false)
+ */
 const isReadableDecryptedStr = (tstr) => {
     if (typeof tstr !== 'string' || (typeof tstr === 'string' && tstr.trim().length === 0)) throw new TypeError('Not String');
     /**
      * @type {Buffer<ArrayBuffer>}
      */
     let raw;
+    // Base64 デコードテスト
     if (/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)?$/.test(tstr.trim())) {
         raw = from(tstr.trim(), 'base64');
     }
+    // HexString(16進数文字列) デコードテスト
     if (/^([0-9a-fA-F]{2})+$/.test(tstr.trim())) {
         raw = from(tstr.trim(), 'hex');
     }
     try {
-        let decoded = new TextDecoder('utf-8', { fatal: true }).decode(raw);
-        return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(decoded) ? false : true;
+        const decoded = new TextDecoder('utf-8', { fatal: true }).decode(raw);
+        if (globalThis.DEBUG_MODE) console.log('[DEBUG] Decoded string can Readable.');
+        return !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(decoded);
     } catch {
+        if (globalThis.DEBUG_MODE) console.log('[DEBUG] Decoded string cannot Readable.');
         return false;
     }
 };
@@ -113,16 +121,22 @@ const canMatchEncryptedStr = (tstr) => {
  */
 export const decryptEncryptedString = (raw) => {
     if (typeof raw !== 'string') throw new TypeError('Not String'); // 型が違うぞバーカ！！
+    if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Trying Decryption: ${raw}`);
     if (raw.trim().length === 0) {
         console.warn('[WARN] This string is empty, decryption skipped.');
         return raw; // 空文字列？はいはいそのまま。
     }
-    let decryptedSample = { str: '', cond: false };
+    if (!canMatchEncryptedStr(raw)) {
+        console.warn(`[WARN] This string is not encrypted, decryption skipped: ${raw}`);
+        return raw;
+    }
+    let decryptedSample = { str: '', cond: false }, prevStr = '';
     let count = 1;
     if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Decryption start: ${raw}`);
     do {
         if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Decryption Lap: ${count}`);
         if (decryptedSample.str.trim().length === 0) decryptedSample.str = raw;
+        prevStr = decryptedSample.str;
         if (globalThis.DEBUG_MODE) console.log('[DEBUG] PHASE 1: BINARY STRING DECRYPT');
         decryptedSample = decryptStringBinary(decryptedSample.str);
         if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Binary String decryption: cond=${decryptedSample.cond}${decryptedSample.cond ? `,str=${decryptedSample.str}` : ''}`);
@@ -132,13 +146,16 @@ export const decryptEncryptedString = (raw) => {
             if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Hex String decryption: cond=${decryptedSample.cond}${decryptedSample.cond ? `,str=${decryptedSample.str}` : ''}`);
         }
         if (!decryptedSample.cond) {
-            decryptedSample = decryptStringBase64(decryptedSample.str);
             if (globalThis.DEBUG_MODE) console.log('[DEBUG] PHASE 3: BASE64 STRING DECRYPT');
+            decryptedSample = decryptStringBase64(decryptedSample.str);
             if (globalThis.DEBUG_MODE) console.log(`[DEBUG] Base64 String decryption: cond=${decryptedSample.cond}${decryptedSample.cond ? `,str=${decryptedSample.str}` : ''}`);
         }
-        if (!canMatchEncryptedStr(decryptedSample.str)) break;
+        if (!canMatchEncryptedStr(decryptedSample.str)) {
+            if (globalThis.DEBUG_MODE) console.log('[DEBUG] All Phase of Decryption have been completed, Exiting do-while loop.');
+            break;
+        }
         count++;
-    } while (decryptedSample.cond);
+    } while (decryptedSample.cond && decryptedSample.str !== prevStr);
     if (globalThis.DEBUG_MODE) console.log('[DEBUG] Decryption complete.');
     if (globalThis.DEBUG_MODE) console.log('----------------------------');
     return decryptedSample.str;
