@@ -1,30 +1,31 @@
 import { accessSync, constants, readFileSync, writeFileSync } from 'fs';
+import { type as OSType } from 'os';
+import { execSync, spawnSync } from 'child_process';
 import { Ajv2020 as Ajv, type ErrorObject } from 'ajv/dist/2020.js';
 import { emitLog } from './logger_utils.mjs';
-import { execSync, spawnSync } from 'child_process';
 const { parse, stringify } = JSON;
 const ajvVdr = new Ajv();
+const isWin = /windows/i.test(OSType().toString());
 
 type jsonValidateResult = {
     err: ErrorObject<string, Record<string, any>, unknown>[] | null | undefined | 'passed';
     result: object | undefined;
 };
 
-export const checkExec = (cmd: string, isWin?: boolean, fullPathMode?: boolean): boolean => {
-    const winFlag = typeof isWin === 'boolean' ? isWin : false;
+export const checkExec = (cmd: string, fullPathMode?: boolean): boolean => {
     const isFullPath = typeof fullPathMode === 'boolean' ? fullPathMode : false;
     if (!isFullPath) {
         try {
-            execSync(`${winFlag ? 'where' : 'which'} ${cmd}`, { stdio: 'ignore' });
+            execSync(`${isWin ? 'where' : 'which'} ${cmd}`, { stdio: 'ignore' });
             return true;
         } catch {
             return false;
         }
     }
     else {
-        const output = spawnSync(winFlag ? `${cmd}` : `which`, [winFlag ? `2>&1` : cmd]);
+        const output = spawnSync(isWin ? `${cmd}` : `which`, [isWin ? `2>&1` : cmd]);
         const { status, error } = output;
-        if (!winFlag) return status === 0;
+        if (!isWin) return status === 0;
         return typeof error === 'undefined';
     }
 };

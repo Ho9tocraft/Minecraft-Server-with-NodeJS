@@ -7,6 +7,7 @@ import { Rcon } from '../rcon.mjs';
 import { emitLog } from '../general_utils/logger_utils.mjs';
 import { buildExecBinEnv } from '../general_utils/string_utils.mjs';
 import { saveServerDataJSON } from './data_io.mjs';
+import { checkExec } from '../general_utils/json_utils.mjs';
 const { from } = Buffer;
 
 type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'RUNNING' | 'CRASHED';
@@ -112,7 +113,7 @@ export abstract class MinecraftServerBase {
         saveServerDataJSON(this.currentJSONStat);
     }
     public overwriteCWDir(pDir: string, pExec?: boolean) {
-        if (globalThis.DEBUG_MODE || pExec) this.srvCwd = pDir;
+        if ((globalThis.DEBUG_MODE || pExec) && checkExec(pDir, true)) this.srvCwd = pDir;
     }
     public startServer(): void {
         this.runningResult.rStop = false;

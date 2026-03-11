@@ -165,7 +165,7 @@ export const buildExecBinEnv = (path: string, tgtVer?: string): string => {
     }
     else {
         if (!checkExec(path.replaceAll(DirRegExp, '').trim())) throw new EvalError('Program not found');
-        if (!checkExec(path.trim(), undefined, true)) throw new EvalError('Specific Program not installed');
+        if (!checkExec(path.trim(), true)) throw new EvalError('Specific Program not installed');
         return path;
     }
 };
