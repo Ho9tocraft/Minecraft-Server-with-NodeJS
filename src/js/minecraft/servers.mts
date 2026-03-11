@@ -160,13 +160,7 @@ export abstract class MinecraftServerBase {
         const { ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
         this.runningResult.rStart = false;
         if (this.serverProc === null || this.runningStat !== 'RUNNING') {
-            if (this.detectCrash()) this.runningStat = 'CRASHED';
             emitLog(ERROR, `The Server "${this.srvId}" isn't RUNNING.`);
-            if (this.runningStat === 'CRASHED') {
-                emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on previous launching.`));
-                this.mayMaintenance = true;
-                this.writeCurrentJSONProcStat();
-            }
         }
         else {
             emitLog(LOG, `The Server Process "${this.srvId}" stopping.`);
@@ -268,7 +262,7 @@ export abstract class MinecraftServerBase {
             this.mayMaintenance = true;
             this.writeCurrentJSONProcStat();
         }).on('exit', (code) => {
-            if (code === 0) this.runningStat = 'STOPPED';
+            if (code === 0 && this.runningStat !== 'CRASHED') this.runningStat = 'STOPPED';
             else this.runningStat = 'CRASHED';
             if (this.runningStat === 'CRASHED') {
                 emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on stopping process.`));
@@ -288,6 +282,12 @@ export abstract class MinecraftServerBase {
                 this.runningStat = 'RUNNING';
                 this.runningResult.rStart = true;
                 if (this.rconCompatible) this.initRconClient();
+                this.writeCurrentJSONProcStat();
+            }
+            else if (this.detectCrash(dStr)) {
+                emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
+                this.runningStat = 'CRASHED';
+                this.mayMaintenance = true;
                 this.writeCurrentJSONProcStat();
             }
         });
@@ -318,11 +318,15 @@ export abstract class MinecraftServerBase {
     protected commandMessageFixing(cmd: string): string {
         return cmd.trim().replaceAll(/(\r|\n|\t)/g, '');
     }
-    protected detectCrash(): boolean {
+    protected detectCrash(message?: string): boolean {
+        const crashMessage = /This crash report has been saved to/i;
+        if (typeof message === 'string') {
+            return crashMessage.test(message);
+        }
         const dirCode = isWin ? '\\' : '/';
         const LATEST_LOG = `${this.srvCwd}${dirCode}logs${dirCode}/latest.log`;
         const file = readFileSync(LATEST_LOG, { encoding: 'utf-8' }).toString();
-        return /This crash report has been saved to/i.test(file)
+        return crashMessage.test(file)
     }
 };
 
