@@ -1,3 +1,4 @@
+import { type as OSType } from 'os';
 import { ChildProcess, spawn } from 'child_process';
 import { TextDecoder } from 'util';
 import { Buffer } from 'buffer';
@@ -7,7 +8,9 @@ import { Rcon } from '../rcon.mjs';
 import { emitLog } from '../general_utils/logger_utils.mjs';
 import { buildExecBinEnv } from '../general_utils/string_utils.mjs';
 import { saveServerDataJSON } from './data_io.mjs';
+import { readFileSync } from 'fs';
 const { from } = Buffer;
+const isWin = /windows/i.test(OSType().toString());
 
 type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'RUNNING' | 'CRASHED';
 type searchResultInfo = {
@@ -146,11 +149,25 @@ export abstract class MinecraftServerBase {
             this.runningResult.rObserve = false;
             return;
         }
+        if (this.detectCrash()) {
+            const { ERROR } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+            emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on previous launching.`));
+            this.mayMaintenance = true;
+            this.writeCurrentJSONProcStat();
+        }
     }
     public stopServer(): void {
         const { ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
         this.runningResult.rStart = false;
-        if (this.serverProc === null || this.runningStat !== 'RUNNING') emitLog(ERROR, `The Server "${this.srvId}" isn't RUNNING.`);
+        if (this.serverProc === null || this.runningStat !== 'RUNNING') {
+            if (this.detectCrash()) this.runningStat = 'CRASHED';
+            emitLog(ERROR, `The Server "${this.srvId}" isn't RUNNING.`);
+            if (this.runningStat === 'CRASHED') {
+                emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on previous launching.`));
+                this.mayMaintenance = true;
+                this.writeCurrentJSONProcStat();
+            }
+        }
         else {
             emitLog(LOG, `The Server Process "${this.srvId}" stopping.`);
             this.instantRCONCommand(this.stopCmd);
@@ -300,6 +317,12 @@ export abstract class MinecraftServerBase {
     }
     protected commandMessageFixing(cmd: string): string {
         return cmd.trim().replaceAll(/(\r|\n|\t)/g, '');
+    }
+    protected detectCrash(): boolean {
+        const dirCode = isWin ? '\\' : '/';
+        const LATEST_LOG = `${this.srvCwd}${dirCode}logs${dirCode}/latest.log`;
+        const file = readFileSync(LATEST_LOG, { encoding: 'utf-8' }).toString();
+        return /This crash report has been saved to/i.test(file)
     }
 };
 
