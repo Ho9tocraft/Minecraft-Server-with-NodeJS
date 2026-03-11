@@ -4,10 +4,10 @@ const logLvRegExp: Readonly<{
     LOG: RegExp,
     INFO: RegExp
 }> = {
-    ERROR: /^\[(ERROR|FATAL)\]$/,
-    WARN: /^\[WARN\]$/,
-    LOG: /^\[(LOG|DEBUG)\]$/,
-    INFO: /^\[INFO\]$/
+    ERROR: /^\[(ERROR|FATAL)\]$/i,
+    WARN: /^\[WARN\]$/i,
+    LOG: /^\[(STDOUT|DEBUG)\]$/i,
+    INFO: /^\[INFO\]$/i
 };
 
 export const emitLog = (level: string, str: string, options?: { optStr?: string, optPal?: boolean }): void => {

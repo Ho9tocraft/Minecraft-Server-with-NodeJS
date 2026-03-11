@@ -6,3 +6,5 @@
 [Nn]ode_modules/*
 # TypeScript
 ./.ts-cache/*
+# Dist Javascript
+[Dd]ist/*

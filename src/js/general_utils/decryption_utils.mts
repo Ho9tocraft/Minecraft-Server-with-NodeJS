@@ -21,17 +21,21 @@ const tgtRegExp: Readonly<{
 export const checkHaveDangerUnicode = (test: string): boolean => { return tgtRegExp.dangerUTF8.test(test); };
 
 const isReadableDecryptedStr = (test: string): boolean => {
+    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+    const { ERROR, DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     if (test.trim().length === 0) throw new TypeError('Not a string');
     const { hex, base64 } = tgtRegExp;
     const trimedTStr = test.trim();
-    let raw: Buffer<ArrayBuffer> | undefined = undefined;
+    let raw: Buffer<ArrayBuffer> | null = null;
     if (hex.test(trimedTStr)) raw = from(trimedTStr, 'hex');
-    if (base64.test(trimedTStr)) raw = from(trimedTStr, 'base64');
-    if (!raw) return false;
+    else if (base64.test(trimedTStr)) raw = from(trimedTStr, 'base64');
+    if (raw === null) return false;
     try {
-        const decoded = new TextDecoder('utf-8', { fatal: true }).decode(raw);
-        return !checkHaveDangerUnicode(test);
+        if (DEBUG_MODE) emitLog(DEBUG, 'Checking Danger Unicode');
+        const decoded = new TextDecoder('utf-8', { fatal: true }).decode(raw).trim();
+        return !checkHaveDangerUnicode(decoded);
     } catch {
+        if (DEBUG_MODE) emitLog(ERROR, 'Test String Have Errored');
         return false;
     }
 };
@@ -44,17 +48,31 @@ const binaryStrToCharCodeArray = (raw: string): Array<number> => {
 
 const isBinaryStr = (test: string): boolean => {
     if (test.trim().length === 0) throw new TypeError('Not a string');
-    return tgtRegExp.binary.test(test.trim());
+    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+    const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    const checkResult = tgtRegExp.binary.test(test.trim());
+    if (DEBUG_MODE) emitLog(DEBUG, `Binary Check Result: ${checkResult}`);
+    return checkResult
 };
 
 const isHexStr = (test: string): boolean => {
     if (test.trim().length === 0) throw new TypeError('Not a string');
-    return tgtRegExp.hex.test(test.trim()) && isReadableDecryptedStr(test);
+    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+    const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    const regExpResult = tgtRegExp.hex.test(test.trim());
+    const readableResult = isReadableDecryptedStr(test);
+    if (DEBUG_MODE) emitLog(DEBUG, `Hex Check Result: ${regExpResult}, Readable Result: ${readableResult}`);
+    return regExpResult && readableResult;
 };
 
 const isBase64Str = (test: string): boolean => {
     if (test.trim().length === 0) throw new TypeError('Not a string');
-    return tgtRegExp.base64.test(test.trim()) && isReadableDecryptedStr(test);
+    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+    const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    const regExpResult = tgtRegExp.base64.test(test.trim());
+    const readableResult = isReadableDecryptedStr(test);
+    if (DEBUG_MODE) emitLog(DEBUG, `Base64 Check Result: ${regExpResult}, Readable Result: ${readableResult}`);
+    return regExpResult && readableResult;
 };
 
 const isEncryptedStr = (test: string): boolean => {

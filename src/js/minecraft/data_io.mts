@@ -1,8 +1,6 @@
 import { checkFile, loadJSONFile } from '../general_utils/json_utils.mjs';
 import { emitLog } from '../general_utils/logger_utils.mjs';
 
-const { GDJSON_PATH, SDJSON_PATH, GDVALIDATE_PATH, SDVALIDATE_PATH } = globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO;
-
 const genErrorLogConfigNeeded = (tgt: string): string => {
     return `Configuration File ${tgt} is invalid, please check ${tgt} is exist, or mode.`;
 };
@@ -12,16 +10,19 @@ const genErrorLogValidNeeded = (tgt: string): string => {
 };
 
 export const loadServerDataJSON = (): ServerDataJSON => {
+    const { SDJSON_PATH, SDVALIDATE_PATH } = globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO;
     const schemaJSON = loadJSONFile(SDVALIDATE_PATH);
     return (loadJSONFile(SDJSON_PATH, schemaJSON) as ServerDataJSON);
 }
 
 export const loadGlobalDataJSON = (): GlobalData => {
+    const { GDJSON_PATH, GDVALIDATE_PATH } = globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO;
     const schemaJSON = loadJSONFile(GDVALIDATE_PATH);
     return (loadJSONFile(GDJSON_PATH, schemaJSON) as GlobalData);
 };
 
 export const isAccessableNeededFiles = (): boolean => {
+    const { GDJSON_PATH, SDJSON_PATH, GDVALIDATE_PATH, SDVALIDATE_PATH } = globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO;
     const { FATAL, ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     const tgtFileFlag = {
         sData: checkFile(SDJSON_PATH),

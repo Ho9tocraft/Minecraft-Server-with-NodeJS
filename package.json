@@ -5,11 +5,12 @@
   "license": "CC-BY-NC-SA-4.0",
   "author": "Ho9tocraft/Exellia Aware",
   "type": "module",
-  "main": "index.mjs",
+  "main": "./dist/index.mjs",
   "scripts": {
-    "test": "node index.mjs --launch-debug",
-    "start": "node index.mjs",
-    "build-watch": "tsc -d -w"
+    "test": "node ./dist/index.mjs --launch-debug",
+    "start": "node ./dist/index.mjs",
+    "build-watch": "tsc -d -w",
+    "install": "npx tsc"
   },
   "dependencies": {
     "ajv": "^8.18.0",

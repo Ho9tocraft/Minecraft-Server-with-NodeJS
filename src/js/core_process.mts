@@ -5,8 +5,27 @@ import { isAccessableNeededFiles, loadGlobalDataJSON, loadServerDataJSON } from 
 const { raw } = String;
 
 const debugServerProcessing = (server: MinecraftServerBase): void => {
-    server.javaBinPath = raw`C:\Program Files\RedHat\java-1.8.0.432-1\bin\java.exe`;
-    server.overwriteCWDir(raw`F:\MinecraftServers\Backup\Forge1710_Main`);
+    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+    const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    server.javaBinPath = 'C:\\Program Files\\RedHat\\java-1.8.0-openjdk-1.8.0.432-1\\bin\\java.exe';
+    server.overwriteCWDir('F:\\MinecraftServers\\Backup\\Forge1710_Main');
+    if (DEBUG_MODE) {
+        const { srvId, srvName, srvCwd, javaBinPath } = server;
+        const runInfo = [
+            '--- Target ServerInst Info Begin ---',
+            `Id: ${srvId}`,
+            `Name: ${srvName}`,
+            `CWD: ${srvCwd}`,
+            `JVMBin: ${javaBinPath}`
+        ];
+        emitLog(DEBUG, runInfo.join('\n'));
+        emitLog(DEBUG, '--- Target ServerInst Info End ---')
+    }
+
+    server.startServer();
+    setTimeout(() => {
+        server.stopServer();
+    }, 20000);
 };
 
 const debugCoreModuleInitProcess = (): void => {

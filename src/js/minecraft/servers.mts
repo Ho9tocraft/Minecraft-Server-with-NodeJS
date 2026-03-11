@@ -110,7 +110,9 @@ export abstract class MinecraftServerBase {
     }
     public startServer(): void {
         this.runningResult.rStop = false;
-        const { FATAL, ERROR, WARN, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+        const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis
+        const { FATAL, ERROR, WARN, LOG, DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+        if (DEBUG_MODE) emitLog(DEBUG, 'startServer() Called.');
         if (this.serverProc !== null && this.serverProc.exitCode === null) {
             emitLog(FATAL, `The Server Process "${this.srvId}" is already generated!`);
             return;
@@ -132,26 +134,18 @@ export abstract class MinecraftServerBase {
             emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
             this.runningStat = 'CRASHED';
             this.mayMaintenance = true;
-        }).on('exit', (code) => {
-            if (code !== 0) {
-                emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
-                this.runningStat = 'CRASHED';
-                this.mayMaintenance = true;
+        });
+        this.serverProc.stdout?.on('data', (data) => {
+            const dStr: string = typeof data === 'string' ? data
+                : (data instanceof Buffer) ? data.toString('utf-8')
+                    : `${data}`;
+            if (rconStartedRegExp.test(dStr)) {
+                emitLog(LOG, `The Server Process "${this.srvId}" starting up SUCCESS.`);
+                this.runningStat = 'RUNNING';
+                this.runningResult.rStart = true;
+                this.writeCurrentJSONProcStat();
             }
         });
-        if (this.serverProc.stdout !== null) {
-            this.serverProc.stdout.on('data', (data) => {
-                const dStr: string = typeof data === 'string' ? data
-                    : (data instanceof Buffer) ? data.toString('utf-8')
-                        : `${data}`;
-                if (rconStartedRegExp.test(dStr)) {
-                    emitLog(LOG, `The Server Process "${this.srvId}" starting up SUCCESS.`);
-                    this.runningStat = 'RUNNING';
-                    this.runningResult.rStart = true;
-                    this.writeCurrentJSONProcStat();
-                }
-            });
-        }
     }
     public observeServer(): void {
         this.runningResult.rObserve = true;
@@ -176,6 +170,7 @@ export abstract class MinecraftServerBase {
         if (this.serverProc === null || this.runningStat !== 'RUNNING') emitLog(ERROR, `The Server "${this.srvId}" isn't RUNNING.`);
         else {
             emitLog(LOG, `The Server Process "${this.srvId}" stopping.`);
+            this.instantRCONCommand(this.stopCmd);
             this.serverProc.on('exit', (code) => {
                 if (code === 0) this.runningStat = 'STOPPED';
                 else this.runningStat = 'CRASHED';
@@ -269,7 +264,7 @@ export abstract class MinecraftServerBase {
         const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
         this.rconClient.Inst = new Rcon('localhost', this.rconPort, this.rconPasswd);
         this.rconClient.Inst.on('auth', () => {
-            emitLog(LOG, `${rconLog} RCon Client Authenticated`);
+            emitLog(LOG, `${rconLog}: RCon Client Authenticated`);
             this.rconClient.Auth = true;
             this.rconClient.QueuedCmds.forEach((cmd) => {
                 if (this.rconClient.Inst === null) return;
@@ -284,7 +279,7 @@ export abstract class MinecraftServerBase {
         }).on('error', (err) => {
             emitLog(ERROR, `${rconLog}: ${err}`);
         }).on('end', () => {
-            emitLog(LOG, `${rconLog} Connection Closed`);
+            emitLog(LOG, `${rconLog}: Connection Closed`);
         });
     }
     protected commandMessageFixing(cmd: string): string {
