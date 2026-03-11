@@ -1,12 +1,32 @@
 import { accessSync, constants, readFileSync, writeFileSync } from 'fs';
 import { Ajv2020 as Ajv, type ErrorObject } from 'ajv/dist/2020.js';
 import { emitLog } from './logger_utils.mjs';
+import { execSync, spawnSync } from 'child_process';
 const { parse, stringify } = JSON;
 const ajvVdr = new Ajv();
 
 type jsonValidateResult = {
     err: ErrorObject<string, Record<string, any>, unknown>[] | null | undefined | 'passed';
     result: object | undefined;
+};
+
+export const checkExec = (cmd: string, isWin?: boolean, fullPathMode?: boolean): boolean => {
+    const winFlag = typeof isWin === 'boolean' ? isWin : false;
+    const isFullPath = typeof fullPathMode === 'boolean' ? fullPathMode : false;
+    if (!isFullPath) {
+        try {
+            execSync(`${winFlag ? 'where' : 'which'} ${cmd}`, { stdio: 'ignore' });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+    else {
+        const output = spawnSync(winFlag ? `${cmd}` : `which`, [winFlag ? `2>&1` : cmd]);
+        const { status, error } = output;
+        if (!winFlag) return status === 0;
+        return typeof error === 'undefined';
+    }
 };
 
 export const checkFile = (fullPath: string): boolean => {
@@ -62,6 +82,6 @@ export const saveJSONFile = (jsonObj: any, fullPath: string, schema?: any): void
         throw new EvalError('JSON Schema Script Cannot Passed');
     }
     emitLog(LOG, 'JSON Validation Passed, Preparing to save to file.');
-    if (check) emitLog(WARN, 'Target File is not found, or not accessable. Testing (re)creating file.');
+    if (!check) emitLog(WARN, 'Target File is not found, or not accessable. Testing (re)creating file.');
     writeFileSync(fullPath, jsonStr, { encoding: 'utf-8' });
 };

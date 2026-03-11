@@ -17,6 +17,7 @@
     "ajv-formats": "^3.0.1",
     "argon2": "^0.44.0",
     "chokidar": "^5.0.0",
+    "cidr-regex": "^5.0.3",
     "csurf": "^1.2.2",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",

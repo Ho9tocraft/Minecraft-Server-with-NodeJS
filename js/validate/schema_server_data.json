@@ -26,7 +26,7 @@
                     },
                     "work": {
                         "type": "object",
-                        "required": ["jvmPath", "jvmArgs", "jarFile", "jarArgs", "rcon"],
+                        "required": ["jvmPath", "jvmArgs", "jarFile", "jarArgs", "proxySocketedSrv", "rcon"],
                         "additionalProperties": false,
                         "properties": {
                             "jvmPath": {
@@ -81,6 +81,12 @@
                             },
                             "jarArgs": {
                                 "type": "string"
+                            },
+                            "proxySocketedSrv": {
+                                "type": [ "array", "null" ],
+                                "items": {
+                                    "type": "string"
+                                }
                             },
                             "rcon": {
                                 "type": "object",

@@ -1,10 +1,12 @@
 import { ChildProcess, spawn } from 'child_process';
 import { TextDecoder } from 'util';
 import { Buffer } from 'buffer';
+import { setTimeout } from 'timers';
 import { checkHaveDangerUnicode, decryptEncryptedStr, decryptRconPasswd } from '../general_utils/decryption_utils.mjs';
 import { Rcon } from '../rcon.mjs';
-import { setTimeout } from 'timers';
 import { emitLog } from '../general_utils/logger_utils.mjs';
+import { buildExecBinEnv } from '../general_utils/string_utils.mjs';
+import { saveServerDataJSON } from './data_io.mjs';
 const { from } = Buffer;
 
 type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'RUNNING' | 'CRASHED';
@@ -14,6 +16,7 @@ type searchResultInfo = {
 };
 
 const rconStartedRegExp = /RCON running on/;
+const proxyStartedRegExp = /Done \([0-9]+(\.[0-9]*)?s\)!/;
 
 export abstract class MinecraftServerBase {
     currentJSONStat: MinecraftServerData;
@@ -22,6 +25,7 @@ export abstract class MinecraftServerBase {
     srvCwd: string;
     javaBinPath: string;
     javaBinArgs: string[];
+    proxySocketSrv: string[] | null;
     rconCompatible: boolean;
     rconPort: number;
     rconPasswd: string;
@@ -60,8 +64,9 @@ export abstract class MinecraftServerBase {
         this.srvId = id;
         this.srvName = this.buildServerName(name);
         this.srvCwd = this.buildCWDir(homeDir);
-        this.javaBinPath = jvmPath;
+        this.javaBinPath = buildExecBinEnv(this.buildJVMBinPath(jvmPath));
         this.javaBinArgs = this.buildLaunchCode(this.combineJVMArgs(this.buildMemoryArgs(Xmx, Xms), jvmArgs.extra, jarFile, jarArgs));
+        this.proxySocketSrv = null;
         this.rconCompatible = false;
         this.rconPort = port;
         this.rconPasswd = this.buildRconPasswd(passwdMode, passwd);
@@ -104,6 +109,7 @@ export abstract class MinecraftServerBase {
         this.currentJSONStat.process.scheduleTime.serverExecStart = this.execStart;
         this.currentJSONStat.process.scheduleTime.override.dayReboot = this.updateScheduleOverride(this.scheduleReboot, tmpDROR);
         this.currentJSONStat.process.scheduleTime.override.weeklyShutdown = this.updateScheduleOverride(this.scheduleShutdown, tmpWSOR);
+        saveServerDataJSON(this.currentJSONStat);
     }
     public overwriteCWDir(pDir: string, pExec?: boolean) {
         if (globalThis.DEBUG_MODE || pExec) this.srvCwd = pDir;
@@ -111,7 +117,7 @@ export abstract class MinecraftServerBase {
     public startServer(): void {
         this.runningResult.rStop = false;
         const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis
-        const { FATAL, ERROR, WARN, LOG, DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+        const { FATAL, WARN, LOG, DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
         if (DEBUG_MODE) emitLog(DEBUG, 'startServer() Called.');
         if (this.serverProc !== null && this.serverProc.exitCode === null) {
             emitLog(FATAL, `The Server Process "${this.srvId}" is already generated!`);
@@ -128,41 +134,18 @@ export abstract class MinecraftServerBase {
             this.writeCurrentJSONProcStat();
         }
         emitLog(LOG, `The Server Process "${this.srvId}" starting...`);
-        if (this.rconCompatible) this.initRconClient();
-        this.serverProc = spawn(this.javaBinPath, this.javaBinArgs, { cwd: this.srvCwd });
-        this.serverProc.on('error', () => {
-            emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
-            this.runningStat = 'CRASHED';
-            this.mayMaintenance = true;
-        });
-        this.serverProc.stdout?.on('data', (data) => {
-            const dStr: string = typeof data === 'string' ? data
-                : (data instanceof Buffer) ? data.toString('utf-8')
-                    : `${data}`;
-            if (rconStartedRegExp.test(dStr)) {
-                emitLog(LOG, `The Server Process "${this.srvId}" starting up SUCCESS.`);
-                this.runningStat = 'RUNNING';
-                this.runningResult.rStart = true;
-                this.writeCurrentJSONProcStat();
-            }
-        });
+        this.initServerProc();
     }
     public observeServer(): void {
         this.runningResult.rObserve = true;
-        const ERROR = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES.ERROR;
         if (this.serverProc === null || this.runningStat !== 'RUNNING') {
             this.runningResult.rObserve = false;
             return;
         }
-        this.serverProc.on('exit', (code) => {
-            if (code !== 0) {
-                emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED.`));
-                this.runningStat = 'CRASHED';
-                this.mayMaintenance = true;
-                this.runningResult.rObserve = false;
-                this.writeCurrentJSONProcStat();
-            }
-        });
+        if (!(typeof this.serverProc.exitCode === 'undefined' || this.serverProc.exitCode === null)) {
+            this.runningResult.rObserve = false;
+            return;
+        }
     }
     public stopServer(): void {
         const { ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
@@ -171,17 +154,6 @@ export abstract class MinecraftServerBase {
         else {
             emitLog(LOG, `The Server Process "${this.srvId}" stopping.`);
             this.instantRCONCommand(this.stopCmd);
-            this.serverProc.on('exit', (code) => {
-                if (code === 0) this.runningStat = 'STOPPED';
-                else this.runningStat = 'CRASHED';
-                if (this.runningStat === 'CRASHED') {
-                    emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on stopping process.`));
-                    this.mayMaintenance = true;
-                }
-                emitLog(LOG, `The Server Process "${this.srvId}" stopped.`);
-                this.runningResult.rStop = true;
-                this.rconClient.Inst = null;
-            });
         }
     }
     public restartServer(): void {
@@ -242,6 +214,17 @@ export abstract class MinecraftServerBase {
         const txtFileSelector = /^@.+\.txt$/;
         return txtFileSelector.test(file) ? file : `-jar ${file}`;
     }
+    protected buildJVMBinPath(PorV: string): string {
+        if (/^(JAVA|JDK)[0-9]+/i.test(PorV)) {
+            const { JDK8, JDK17, JDK21 } = globalThis.MCSERV_CONTROLLER_ENV.JAVA_VERSION;
+            const prepareCode = PorV.replace(/JAVA/i, 'JDK');
+            if (prepareCode === 'JDK8') return JDK8;
+            if (prepareCode === 'JDK17') return JDK17;
+            if (prepareCode === 'JDK21') return JDK21;
+            throw new EvalError('Unsupported Java Runtime');
+        }
+        return PorV;
+    }
     protected combineJVMArgs(jvmMemory: string, jvmExtra: string, jarFile: string, jarArgs: string): string {
         return `${jvmMemory} ${jvmExtra} ${this.buildJarFileArgs(jarFile)} ${jarArgs}`;
     }
@@ -259,12 +242,44 @@ export abstract class MinecraftServerBase {
         else if (stat === 'CRASHED') return 'CRASHED';
         else return 'UNDEFINED';
     }
+    protected initServerProc(): void {
+        const { ERROR, LOG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+        this.serverProc = spawn(this.javaBinPath, this.javaBinArgs, { cwd: this.srvCwd });
+        this.serverProc.on('error', () => {
+            emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
+            this.runningStat = 'CRASHED';
+            this.mayMaintenance = true;
+        }).on('exit', (code) => {
+            if (code === 0) this.runningStat = 'STOPPED';
+            else this.runningStat = 'CRASHED';
+            if (this.runningStat === 'CRASHED') {
+                emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on stopping process.`));
+                this.mayMaintenance = true;
+            }
+            emitLog(LOG, `The Server Process "${this.srvId}" stopped.`);
+            this.runningResult.rStop = true;
+            this.rconClient.Inst = null;
+            this.writeCurrentJSONProcStat();
+        });
+        this.serverProc.stdout?.on('data', (data) => {
+            const dStr: string = typeof data === 'string' ? data
+                : (data instanceof Buffer) ? data.toString('utf-8')
+                    : `${data}`;
+            if (rconStartedRegExp.test(dStr) || (!this.rconCompatible && proxyStartedRegExp.test(dStr))) {
+                emitLog(LOG, `The ${!this.rconCompatible ? 'Proxy ' : ''}Server Process "${this.srvId}" starting up SUCCESS.`);
+                this.runningStat = 'RUNNING';
+                this.runningResult.rStart = true;
+                if (this.rconCompatible) this.initRconClient();
+                this.writeCurrentJSONProcStat();
+            }
+        });
+    }
     protected initRconClient(): void {
         const { ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
         const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
         this.rconClient.Inst = new Rcon('localhost', this.rconPort, this.rconPasswd);
         this.rconClient.Inst.on('auth', () => {
-            emitLog(LOG, `${rconLog}: RCon Client Authenticated`);
+            emitLog(LOG, 'RCon Client Authenticated', { optStr: rconLog });
             this.rconClient.Auth = true;
             this.rconClient.QueuedCmds.forEach((cmd) => {
                 if (this.rconClient.Inst === null) return;
@@ -275,11 +290,11 @@ export abstract class MinecraftServerBase {
                 }
             });
         }).on('response', (str) => {
-            emitLog(LOG, `${rconLog}: ${str}`);
+            emitLog(LOG, str, { optStr: rconLog });
         }).on('error', (err) => {
-            emitLog(ERROR, `${rconLog}: ${err}`);
+            emitLog(ERROR, err, { optStr: rconLog });
         }).on('end', () => {
-            emitLog(LOG, `${rconLog}: Connection Closed`);
+            emitLog(LOG, 'Connection Closed', { optStr: rconLog });
         });
     }
     protected commandMessageFixing(cmd: string): string {
@@ -306,12 +321,70 @@ export class MinecraftServer extends MinecraftServerBase {
 };
 
 export class VelocityServer extends MinecraftServerBase {
+    protected socketedServerStat: Map<string, { stat: boolean, reason: string }>;
     constructor(serverJSON: MinecraftServerData) {
         super(serverJSON);
+        const { proxySocketedSrv } = serverJSON.work;
         this.stopCmd = 'end';
+        this.proxySocketSrv = proxySocketedSrv || [];
+        this.socketedServerStat = new Map();
     }
-    override instantRCONCommand(cmd: string): void {
+    public override instantRCONCommand(cmd: string): void {
         this.instantStdinCommand(cmd);
+    }
+    public override observeServer(): void {
+        this.runningResult.rObserve = true;
+        const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+        const { ERROR, WARN, LOG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+        if (this.serverProc === null || this.runningStat !== 'RUNNING') {
+            this.runningResult.rObserve = false;
+            return;
+        }
+        if (!(typeof this.serverProc.exitCode === 'undefined' || this.serverProc.exitCode === null)) {
+            this.runningResult.rObserve = false;
+            return;
+        }
+        if (DEBUG_MODE) emitLog(WARN, 'DEBUG MODE enabled. Skipping Result-Based Process Stopping.', { optStr: '[PROXY-SRV]' });
+        this.checkProxySocketedServerStatus();
+        this.socketedServerStat.forEach((value, key) => {
+            const { stat: isOnline, reason: stat } = value;
+            emitLog(LOG, `Socketed Server ${key} Status: ${stat}`, { optStr: '[PROXY-SRV]' });
+            if (this.runningResult.rObserve && !isOnline) this.runningResult.rObserve = false;
+        });
+        if (!this.runningResult.rObserve) {
+            emitLog(ERROR, 'Some of the socketed server is not Launched.', { optStr: '[PROXY-SRV]' });
+            if (!DEBUG_MODE) {
+                emitLog(ERROR, 'Stop phase started.', { optStr: '[PROXY-SRV]' });
+                this.stopServer();
+            }
+        }
+    }
+    protected checkProxySocketedServerStatus(): void {
+        const { LOGGING_PREFIXES, SERVER_INSTANCES } = globalThis.MCSERV_CONTROLLER_ENV;
+        const { ERROR, WARN } = LOGGING_PREFIXES;
+        let tgtServerInstances: MinecraftServerBase[] = [];
+        this.proxySocketSrv?.forEach((tgtSrvId) => {
+            const { success, result } = searchServerInstance(tgtSrvId);
+            if (success) {
+                const tgtSrv = SERVER_INSTANCES.at(result.idx);
+                if (typeof tgtSrv === 'undefined') {
+                    emitLog(WARN, 'Socketed Server not matched.', { optStr: '[PROXY-SRV]' });
+                    return;
+                }
+                tgtServerInstances.push(tgtSrv);
+            }
+        });
+        if (tgtServerInstances.length === 0) {
+            emitLog(ERROR, 'Matched Socketed Server nothing.');
+            this.runningResult.rObserve = false;
+            return;
+        }
+        tgtServerInstances.forEach((srvInst) => {
+            srvInst.observeServer();
+            const { srvId, runningResult } = srvInst;
+            const observe = runningResult.rObserve;
+            this.socketedServerStat.set(srvId, { stat: observe, reason: `Server is ${observe ? 'online' : 'offline'}` });
+        });
     }
 }
 
@@ -332,10 +405,11 @@ export const generateServerInstance = (): void => {
 
 export const searchServerInstance = (keyword: string, optIdx?: number): { success: boolean, result: searchResultInfo } => {
     optIdx = optIdx || 0;
+    const failedResult = { success: false, result: { idx: -1, name: 'result not matching' } };
     const allSearch = searchMatchedAllServerInstances(keyword);
-    if (!allSearch.success || allSearch.result.length === 0) throw new EvalError('Search Result is Nothing');
+    if (!allSearch.success || allSearch.result.length === 0) return failedResult;
     const getResult = allSearch.result.at(optIdx);
-    if (typeof getResult === 'undefined') throw new EvalError('Search Result is undefined');
+    if (typeof getResult === 'undefined') return failedResult;
     return { success: allSearch.success, result: getResult };
 };
 

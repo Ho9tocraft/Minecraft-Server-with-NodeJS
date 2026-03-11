@@ -49,6 +49,7 @@ declare global {
             };
             jarFile: string;
             jarArgs: string;
+            proxySocketedSrv: string[] | null;
             rcon: {
                 port: number;
                 passwdMode: string;

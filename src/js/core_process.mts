@@ -2,12 +2,11 @@ import { setTimeout } from 'timers';
 import { generateServerInstance, MinecraftServerBase, searchServerInstance } from './minecraft/servers.mjs';
 import { emitLog } from './general_utils/logger_utils.mjs';
 import { isAccessableNeededFiles, loadGlobalDataJSON, loadServerDataJSON } from './minecraft/data_io.mjs';
-const { raw } = String;
+import { checkExec } from './general_utils/json_utils.mjs';
 
 const debugServerProcessing = (server: MinecraftServerBase): void => {
     const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
     const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-    server.javaBinPath = 'C:\\Program Files\\RedHat\\java-1.8.0-openjdk-1.8.0.432-1\\bin\\java.exe';
     server.overwriteCWDir('F:\\MinecraftServers\\Backup\\Forge1710_Main');
     if (DEBUG_MODE) {
         const { srvId, srvName, srvCwd, javaBinPath } = server;

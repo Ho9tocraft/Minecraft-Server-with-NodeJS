@@ -1,5 +1,13 @@
-import { checkFile, loadJSONFile } from '../general_utils/json_utils.mjs';
+import { checkFile, loadJSONFile, saveJSONFile } from '../general_utils/json_utils.mjs';
 import { emitLog } from '../general_utils/logger_utils.mjs';
+
+const validator: {
+    serverData: object | undefined,
+    globalData: object | undefined
+} = {
+    serverData: undefined,
+    globalData: undefined
+}
 
 const genErrorLogConfigNeeded = (tgt: string): string => {
     return `Configuration File ${tgt} is invalid, please check ${tgt} is exist, or mode.`;
@@ -9,16 +17,40 @@ const genErrorLogValidNeeded = (tgt: string): string => {
     return `Validation File ${tgt} is invalid, please check ${tgt} is exist, or mode.`;
 };
 
+const uploadServerDataJSON = (jsonObj: MinecraftServerData[]): void => {
+    globalThis.MCSERV_CONTROLLER_ENV.SERVER_CONFIG_INFO = jsonObj;
+}
+
 export const loadServerDataJSON = (): ServerDataJSON => {
     const { SDJSON_PATH, SDVALIDATE_PATH } = globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO;
-    const schemaJSON = loadJSONFile(SDVALIDATE_PATH);
-    return (loadJSONFile(SDJSON_PATH, schemaJSON) as ServerDataJSON);
+    validator.serverData = validator.serverData || loadJSONFile(SDVALIDATE_PATH);
+    return (loadJSONFile(SDJSON_PATH, validator.serverData) as ServerDataJSON);
 }
 
 export const loadGlobalDataJSON = (): GlobalData => {
     const { GDJSON_PATH, GDVALIDATE_PATH } = globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO;
-    const schemaJSON = loadJSONFile(GDVALIDATE_PATH);
-    return (loadJSONFile(GDJSON_PATH, schemaJSON) as GlobalData);
+    validator.globalData = validator.globalData || loadJSONFile(GDVALIDATE_PATH);
+    return (loadJSONFile(GDJSON_PATH, validator.globalData) as GlobalData);
+};
+
+export const saveServerDataJSON = (jsonObj: MinecraftServerData): void => {
+    const { SERVER_CONFIG_INFO, CONFIG_VALIDATE_INFO } = globalThis.MCSERV_CONTROLLER_ENV;
+    const { SDJSON_PATH, SDVALIDATE_PATH } = CONFIG_VALIDATE_INFO;
+    validator.serverData = validator.serverData || loadJSONFile(SDVALIDATE_PATH);
+    const replSDataArray: MinecraftServerData[] = [];
+    SERVER_CONFIG_INFO.forEach((scInfo) => {
+        if (jsonObj.id === scInfo.id) replSDataArray.push(jsonObj);
+        else replSDataArray.push(scInfo);
+    });
+    uploadServerDataJSON(replSDataArray);
+    const finSrvDataJSON: ServerDataJSON = { servers: globalThis.MCSERV_CONTROLLER_ENV.SERVER_CONFIG_INFO };
+    saveJSONFile(finSrvDataJSON, SDJSON_PATH, validator.serverData);
+};
+
+export const saveGlobalDataJSON = (jsonObj: GlobalData): void => {
+    const { GDJSON_PATH, GDVALIDATE_PATH } = globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO;
+    validator.globalData = validator.globalData || loadJSONFile(GDVALIDATE_PATH);
+    saveJSONFile(jsonObj, GDJSON_PATH, validator.globalData);
 };
 
 export const isAccessableNeededFiles = (): boolean => {

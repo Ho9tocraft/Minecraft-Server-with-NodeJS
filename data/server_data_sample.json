@@ -15,6 +15,7 @@
                 },
                 "jarFile": "LAUNCHING FILE HERE",
                 "jarArgs": "SERVER JAR LAUNCHING OPTION HERE",
+                "proxySocketedSrv": null,
                 "rcon": {
                     "port": 25575,
                     "passwdMode": "default",
