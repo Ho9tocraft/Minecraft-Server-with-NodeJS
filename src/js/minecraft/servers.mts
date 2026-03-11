@@ -249,6 +249,7 @@ export abstract class MinecraftServerBase {
             emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
             this.runningStat = 'CRASHED';
             this.mayMaintenance = true;
+            this.writeCurrentJSONProcStat();
         }).on('exit', (code) => {
             if (code === 0) this.runningStat = 'STOPPED';
             else this.runningStat = 'CRASHED';
