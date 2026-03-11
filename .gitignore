@@ -4,3 +4,5 @@
 [Dd]ata/server_data.json
 # NPM Package
 [Nn]ode_modules/*
+# TypeScript
+./.ts-cache/*

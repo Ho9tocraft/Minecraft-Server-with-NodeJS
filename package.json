@@ -8,7 +8,8 @@
   "main": "index.mjs",
   "scripts": {
     "test": "node index.mjs --launch-debug",
-    "start": "node index.mjs"
+    "start": "node index.mjs",
+    "build-watch": "tsc -d -w"
   },
   "dependencies": {
     "ajv": "^8.18.0",
@@ -36,12 +37,16 @@
     "rcon": "^1.1.0",
     "session-file-store": "^1.5.0",
     "tree-kill": "^1.2.2",
+    "typescript": "^5.9.3",
     "word-list": "^4.1.0",
     "write-file-atomic": "^7.0.1",
     "ws": "^8.19.0"
   },
   "devDependencies": {
     "@coffeeandfun/google-profanity-words": "^3.0.0",
-    "dale-chall": "^2.0.1"
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.4.0",
+    "dale-chall": "^2.0.1",
+    "ts-node": "^10.9.2"
   }
 }

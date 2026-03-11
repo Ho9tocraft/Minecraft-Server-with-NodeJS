@@ -5,7 +5,7 @@
             "name": "SERVER NAME HERE",
             "homeDir": "LAUNCH HOME DIR HERE",
             "work": {
-                "jvmPath": "JVM FULLPATH HERE",
+                "jvmPath": "JVM FULLPATH OR JAVA VERSION HERE",
                 "jvmArgs": {
                     "memory": {
                         "Xmx": { "amount": 4, "unit": "G" },
