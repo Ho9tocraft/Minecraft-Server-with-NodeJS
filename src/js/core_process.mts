@@ -4,6 +4,7 @@ import { generateServerInstance, MinecraftServerBase, searchServerInstance } fro
 import { emitLog } from './general_utils/logger_utils.mjs';
 import { isAccessableNeededFiles, loadGlobalDataJSON, loadServerDataJSON } from './minecraft/data_io.mjs';
 import { checkExec } from './general_utils/json_utils.mjs';
+const { dirname } = import.meta;
 
 const debugServerProcessing = (server: MinecraftServerBase): void => {
     const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
@@ -67,7 +68,6 @@ export const coreModuleInitProcess = (): void => {
 };
 
 export const initGlobalThisVariables = (): void => {
-    const { dirname } = import.meta;
     globalThis.DEBUG_MODE = false;
     globalThis.DEBUG_SERVER_TARGET = '';
     globalThis.MCSERV_CONTROLLER_ENV = {
@@ -106,11 +106,11 @@ export const initGlobalThisVariables = (): void => {
             JDK21: '/usr/lib/jvm/java-21-openjdk-amd64/bin/java'
         },
         CONFIG_VALIDATE_INFO: {
-            GDJSON_PATH: join(dirname, '../data/global_data.json'),
-            SDJSON_PATH: join(dirname, '../data/server_data.json'),
-            GDVALIDATE_PATH: join(dirname, '../js/validate/schema_global_data.json'),
-            SDVALIDATE_PATH: join(dirname, '../js/validate/schema_server_data.json'),
-            SRVINST_CACHE_PATH: join(dirname, '../data/.cache_server.dat')
+            GDJSON_PATH: join(dirname, '../../data/global_data.json'),
+            SDJSON_PATH: join(dirname, '../../data/server_data.json'),
+            GDVALIDATE_PATH: join(dirname, '../../js/validate/schema_global_data.json'),
+            SDVALIDATE_PATH: join(dirname, '../../js/validate/schema_server_data.json'),
+            SRVINST_CACHE_PATH: join(dirname, '../../data/.cache_server.dat')
         }
     };
 };

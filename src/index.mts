@@ -169,6 +169,7 @@ const runMain = (): number => {
 
 if (main) {
     initGlobalThisVariables();
+    console.log(JSON.stringify(globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO));
     const values = (parseArgs({ args, options: launchOptions }).values as launchOption);
     globalThis.DEBUG_MODE = values['launch-debug'];
     globalThis.DEBUG_SERVER_TARGET = values['launchServer'];

@@ -56,6 +56,10 @@ export const saveGlobalDataJSON = (jsonObj: GlobalData, supress?: boolean): void
 export const isAccessableNeededFiles = (): boolean => {
     const { GDJSON_PATH, SDJSON_PATH, GDVALIDATE_PATH, SDVALIDATE_PATH } = globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO;
     const { FATAL, ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    emitLog(LOG, GDJSON_PATH);
+    emitLog(LOG, SDJSON_PATH);
+    emitLog(LOG, GDVALIDATE_PATH);
+    emitLog(LOG, SDVALIDATE_PATH);
     const tgtFileFlag = {
         sData: checkFile(SDJSON_PATH),
         sValid: checkFile(SDVALIDATE_PATH),
