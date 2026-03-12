@@ -2,6 +2,7 @@
 [Ee]xclude/*
 # デバッグなどで使用するファイル群
 [Dd]ata/server_data.json
+[Dd]ata/.cache_server.*
 # NPM Package
 [Nn]ode_modules/*
 # TypeScript

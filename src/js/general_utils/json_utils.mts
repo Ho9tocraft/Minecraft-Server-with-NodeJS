@@ -1,9 +1,13 @@
 import { accessSync, constants, readFileSync, writeFileSync } from 'fs';
 import { type as OSType } from 'os';
 import { execSync, spawnSync } from 'child_process';
+import { Buffer } from 'buffer';
 import { Ajv2020 as Ajv, type ErrorObject } from 'ajv/dist/2020.js';
 import { emitLog } from './logger_utils.mjs';
+import { decryptEncryptedStr } from './decryption_utils.mjs';
+import { encryptBinaryStr } from './encryption_utils.mjs';
 const { parse, stringify } = JSON;
+const { from } = Buffer;
 const ajvVdr = new Ajv();
 const isWin = /windows/i.test(OSType().toString());
 
@@ -69,7 +73,7 @@ export const loadJSONFile = (fullPath: string, schema?: any): object => {
     return tgtJSON.result;
 };
 
-export const saveJSONFile = (jsonObj: any, fullPath: string, schema?: any): void => {
+export const saveJSONFile = (jsonObj: any, fullPath: string, schema?: any, supress?: boolean): void => {
     const { ERROR, WARN, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     const check = checkFile(fullPath);
     if (!check) {
@@ -82,7 +86,54 @@ export const saveJSONFile = (jsonObj: any, fullPath: string, schema?: any): void
         emitLog(ERROR, 'JSON Validation Failed');
         throw new EvalError('JSON Schema Script Cannot Passed');
     }
-    emitLog(LOG, 'JSON Validation Passed, Preparing to save to file.');
+    if (!supress) emitLog(LOG, 'JSON Validation Passed, Preparing to save to file.');
     if (!check) emitLog(WARN, 'Target File is not found, or not accessable. Testing (re)creating file.');
     writeFileSync(fullPath, jsonStr, { encoding: 'utf-8' });
+};
+
+export const loadCacheFile = (): void => {
+    /*
+    キャッシュファイルの形式: .dat(想定)
+    暗号化: Base64文字列→2進数文字列→16進数文字列→Base64文字列→(16進数文字列→Base64文字列→2進数文字列→16進数文字列→Base64文字列)(改行付き)
+    */
+    const { CONFIG_VALIDATE_INFO, LOGGING_PREFIXES } = globalThis.MCSERV_CONTROLLER_ENV;
+    const { SRVINST_CACHE_PATH } = CONFIG_VALIDATE_INFO;
+    const { WARN, INFO } = LOGGING_PREFIXES;
+    globalThis.MCSERV_CONTROLLER_ENV.SRVINST_CACHE = [];
+    if (!checkFile(SRVINST_CACHE_PATH)) {
+        emitLog(WARN, 'File not found, or not accessable. Testing (re)creating file.');
+        writeFileSync(SRVINST_CACHE_PATH, '', 'binary');
+    }
+    const tgtFile = readFileSync(SRVINST_CACHE_PATH, { encoding: 'binary' }).toString();
+    const decArrayedCache = decryptEncryptedStr(tgtFile).replaceAll('\r','').split('\n');
+    decArrayedCache.forEach((tgtStr) => {
+        const decStr = decryptEncryptedStr(tgtStr);
+        if (decStr.trim().length === 0) return;
+        if (!/^[!-~]+$/.test(decStr)) throw new EvalError('Invalid Cache');
+        globalThis.MCSERV_CONTROLLER_ENV.SRVINST_CACHE.push(decStr);
+    });
+    emitLog(INFO, `GET CACHE: ${globalThis.MCSERV_CONTROLLER_ENV.SRVINST_CACHE}`);
+};
+
+export const writeCacheFile = (): void => {
+    const { CONFIG_VALIDATE_INFO, LOGGING_PREFIXES, SRVINST_CACHE } = globalThis.MCSERV_CONTROLLER_ENV;
+    const { SRVINST_CACHE_PATH } = CONFIG_VALIDATE_INFO;
+    const { WARN } = LOGGING_PREFIXES;
+    const srvInstCachesForWrite: string[] = [];
+
+    SRVINST_CACHE.forEach((cache) => {
+        if (/^[!-~]+$/.test(cache)) {
+            srvInstCachesForWrite.push(from(
+                from(encryptBinaryStr(
+                    from(from(cache, 'utf-8').toString('base64'), 'utf-8').toString('hex')
+                ), 'utf-8').toString('base64'), 'utf-8'
+            ).toString('hex'));
+        }
+    });
+    let srvInstCacheForFinalize: string = srvInstCachesForWrite.length > 0 ? from(encryptBinaryStr(
+        from(from(srvInstCachesForWrite.join('\n'), 'utf-8').toString('base64'), 'utf-8').toString('hex')
+    ), 'utf-8').toString('base64') : '';
+
+    if (!checkFile(SRVINST_CACHE_PATH)) emitLog(WARN, 'File not found, or not accessable. Testing (re)creating file.');
+    writeFileSync(SRVINST_CACHE_PATH, srvInstCacheForFinalize, 'binary');
 };

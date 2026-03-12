@@ -1,7 +1,8 @@
-import { parseArgs } from "util";
-import { coreModuleInitProcess } from "./js/core_process.mjs";
-import { MinecraftServerBase } from "./js/minecraft/servers.mjs";
-import { join } from "path";
+import { parseArgs } from 'util';
+import { coreModuleInitProcess, initGlobalThisVariables } from './js/core_process.mjs';
+import { MinecraftServerBase } from './js/minecraft/servers.mjs';
+import { join } from 'path';
+const { main } = import.meta;
 
 declare global {
     export type rconConstructorOptions = {
@@ -106,7 +107,7 @@ declare global {
     export var DEBUG_SERVER_TARGET: string;
     export var MCSERV_CONTROLLER_ENV: {
         /**
-         * server_data.json's "servers" property's data
+         * server_data.json's 'servers' property's data
          */
         SERVER_CONFIG_INFO: MinecraftServerData[];
         /**
@@ -132,11 +133,12 @@ declare global {
             SDJSON_PATH: string;
             GDVALIDATE_PATH: string;
             SDVALIDATE_PATH: string;
+            SRVINST_CACHE_PATH: string;
         };
+        SRVINST_CACHE: string[];
     };
 } (globalThis as any)
 
-const { main, dirname } = import.meta;
 type launchOption = {
     'launch-debug': boolean,
     'launchServer': string
@@ -152,52 +154,6 @@ const launchOptions: any = {
     }
 };
 const args = process.argv.slice(2);
-
-const initGlobalThisVariables = (): void => {
-    globalThis.DEBUG_MODE = false;
-    globalThis.DEBUG_SERVER_TARGET = '';
-    globalThis.MCSERV_CONTROLLER_ENV = {
-        SERVER_CONFIG_INFO: [],
-        SERVER_INSTANCES: [],
-        GLOBAL_CONFIG: {
-            version_info: '',
-            global_data: {
-                mcsRootDir: '',
-                maintenanceMode: true,
-                serverScheduleTime: {
-                    dayReboot: {
-                        motd: '',
-                        exec: ''
-                    },
-                    weeklyShutdown: {
-                        motd: '',
-                        exec: ''
-                    },
-                    pluginServBuildPull: ''
-                }
-            }
-        },
-        LOGGING_PREFIXES: {
-            DEBUG: '[DEBUG]',
-            INFO: '[INFO]',
-            LOG: '[STDOUT]',
-            WARN: '[WARN]',
-            ERROR: '[ERROR]',
-            FATAL: '[FATAL]'
-        },
-        JAVA_VERSION: {
-            JDK8: '/usr/lib/jvm/java-8-openjdk-amd64/bin/java',
-            JDK17: '',
-            JDK21: ''
-        },
-        CONFIG_VALIDATE_INFO: {
-            GDJSON_PATH: join(dirname, '../data/global_data.json'),
-            SDJSON_PATH: join(dirname, '../data/server_data.json'),
-            GDVALIDATE_PATH: join(dirname, '../js/validate/schema_global_data.json'),
-            SDVALIDATE_PATH: join(dirname, '../js/validate/schema_server_data.json')
-        }
-    };
-};
 
 const runMain = (): number => {
     try {

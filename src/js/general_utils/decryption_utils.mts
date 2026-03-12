@@ -5,6 +5,10 @@ import { emitLog } from './logger_utils.mjs';
 const { parse } = JSON;
 const { from, concat } = Buffer;
 
+export type DecryptResult = {
+    str: string;
+    cond: boolean;
+};
 
 const tgtRegExp: Readonly<{
     binary: RegExp,
@@ -23,8 +27,8 @@ export const checkHaveDangerUnicode = (test: string): boolean => { return tgtReg
 const isReadableDecryptedStr = (test: string): boolean => {
     const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
     const { ERROR, DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-    if (test.trim().length === 0) throw new TypeError('Not a string');
     const { hex, base64 } = tgtRegExp;
+    if (test.trim().length === 0) throw new TypeError('Not a string');
     const trimedTStr = test.trim();
     let raw: Buffer<ArrayBuffer> | null = null;
     if (hex.test(trimedTStr)) raw = from(trimedTStr, 'hex');
@@ -79,7 +83,7 @@ const isEncryptedStr = (test: string): boolean => {
     return isBinaryStr(test) || isHexStr(test) || isBase64Str(test);
 };
 
-const decryptBinStr = (raw: string): { str: string, cond: boolean } => {
+const decryptBinStr = (raw: string): DecryptResult => {
     const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
     const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     const trimedRStr = raw.trim();
@@ -91,7 +95,7 @@ const decryptBinStr = (raw: string): { str: string, cond: boolean } => {
     return { str: from(binaryStrToCharCodeArray(trimedRStr)).toString('utf-8'), cond: true };
 };
 
-const decryptHexStr = (raw: string): { str: string, cond: boolean } => {
+const decryptHexStr = (raw: string): DecryptResult => {
     const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
     const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     const trimedRStr = raw.trim();
@@ -103,7 +107,7 @@ const decryptHexStr = (raw: string): { str: string, cond: boolean } => {
     return { str: from(trimedRStr, 'hex').toString('utf-8'), cond: true };
 };
 
-const decryptBase64Str = (raw: string): { str: string, cond: boolean } => {
+const decryptBase64Str = (raw: string): DecryptResult => {
     const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
     const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     const trimedRStr = raw.trim();

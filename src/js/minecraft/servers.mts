@@ -3,13 +3,16 @@ import { ChildProcess, spawn } from 'child_process';
 import { TextDecoder } from 'util';
 import { Buffer } from 'buffer';
 import { setTimeout } from 'timers';
+import { readFileSync } from 'fs';
+import _ from 'lodash';
 import { checkHaveDangerUnicode, decryptEncryptedStr, decryptRconPasswd } from '../general_utils/decryption_utils.mjs';
 import { Rcon } from '../rcon.mjs';
 import { emitLog } from '../general_utils/logger_utils.mjs';
 import { buildExecBinEnv } from '../general_utils/string_utils.mjs';
 import { saveServerDataJSON } from './data_io.mjs';
-import { readFileSync } from 'fs';
+import { loadCacheFile, writeCacheFile } from '../general_utils/json_utils.mjs';
 const { from } = Buffer;
+const { isEqual } = _;
 const isWin = /windows/i.test(OSType().toString());
 
 type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'RUNNING' | 'CRASHED';
@@ -22,39 +25,40 @@ const rconStartedRegExp = /RCON running on/;
 const proxyStartedRegExp = /Done \([0-9]+(\.[0-9]*)?s\)!/;
 
 export abstract class MinecraftServerBase {
-    currentJSONStat: MinecraftServerData;
-    srvId: string;
-    srvName: string;
-    srvCwd: string;
-    javaBinPath: string;
-    javaBinArgs: string[];
-    proxySocketSrv: string[] | null;
-    rconCompatible: boolean;
-    rconPort: number;
-    rconPasswd: string;
-    rconClient: {
+    protected prevJSONStat: MinecraftServerData;
+    public currentJSONStat: MinecraftServerData;
+    public srvId: string;
+    public srvName: string;
+    public srvCwd: string;
+    public javaBinPath: string;
+    public javaBinArgs: string[];
+    public proxySocketSrv: string[] | null;
+    public rconCompatible: boolean;
+    public rconPort: number;
+    public rconPasswd: string;
+    public rconClient: {
         Inst: Rcon | null,
         Auth: boolean,
         QueuedCmds: string[]
     };
-    runningStat: RunningStatus;
-    runningResult: {
+    public runningStat: RunningStatus;
+    public runningResult: {
         rStart: boolean,
         rStop: boolean,
         rObserve: boolean
     };
-    mayMaintenance: boolean;
-    execStart: string;
-    scheduleReboot: scheduleTimeInfo;
-    scheduleShutdown: scheduleTimeInfo;
-    serverProc: ChildProcess | null;
-    stopCmd: string;
+    public mayMaintenance: boolean;
+    public execStart: string;
+    public scheduleReboot: scheduleTimeInfo;
+    public scheduleShutdown: scheduleTimeInfo;
+    public serverProc: ChildProcess | null;
+    public stopCmd: string;
 
     // public:
     public constructor(serverJSON: MinecraftServerData) {
         this.currentJSONStat = serverJSON;
         const { id, name, homeDir, work, process } = this.currentJSONStat;
-        const { jvmPath, jvmArgs, jarFile, jarArgs, rcon } = work;
+        const { jvmPath, jvmArgs, jarFile, jarArgs, rcon, proxySocketedSrv } = work;
         const { Xmx, Xms } = jvmArgs.memory;
         const { port, passwdMode, passwd } = rcon;
         const { runningStatus, maintenanceMode, scheduleTime } = process;
@@ -63,6 +67,8 @@ export abstract class MinecraftServerBase {
         const { dayReboot: glbDR, weeklyShutdown: glbWS } = globalThis.MCSERV_CONTROLLER_ENV.GLOBAL_CONFIG.global_data.serverScheduleTime;
         const tmpDR: Readonly<scheduleTimeInfo> = { motd: dayReboot.motd, exec: dayReboot.exec };
         const tmpWS: Readonly<scheduleTimeInfo> = { motd: weeklyShutdown.motd, exec: weeklyShutdown.exec };
+
+        this.prevJSONStat = this.rebuildPrevServerJSON();
 
         this.srvId = id;
         this.srvName = this.buildServerName(name);
@@ -90,6 +96,7 @@ export abstract class MinecraftServerBase {
         this.scheduleShutdown = weeklyShutdown.doOverride ? tmpWS : glbWS;
         this.serverProc = null;
         this.stopCmd = 'stop';
+        this.writeCurrentJSONProcStat(true, true);
     }
     public rebuildProcProperties(): void {
         const { runningStatus, maintenanceMode, scheduleTime } = this.currentJSONStat.process;
@@ -104,7 +111,7 @@ export abstract class MinecraftServerBase {
         if (!this.compareScheduleInfo(this.scheduleShutdown, tmpWS)) this.scheduleShutdown = tmpWS;
         this.writeCurrentJSONProcStat();
     };
-    public writeCurrentJSONProcStat(): void {
+    public writeCurrentJSONProcStat(force?: boolean, supress?: boolean): void {
         const tmpDROR: boolean = this.currentJSONStat.process.scheduleTime.override.dayReboot.doOverride;
         const tmpWSOR: boolean = this.currentJSONStat.process.scheduleTime.override.weeklyShutdown.doOverride;
         this.currentJSONStat.process.runningStatus = this.runningStat;
@@ -112,7 +119,10 @@ export abstract class MinecraftServerBase {
         this.currentJSONStat.process.scheduleTime.serverExecStart = this.execStart;
         this.currentJSONStat.process.scheduleTime.override.dayReboot = this.updateScheduleOverride(this.scheduleReboot, tmpDROR);
         this.currentJSONStat.process.scheduleTime.override.weeklyShutdown = this.updateScheduleOverride(this.scheduleShutdown, tmpWSOR);
-        saveServerDataJSON(this.currentJSONStat);
+        if (!compareServerJSONInfo(this.prevJSONStat, this.currentJSONStat) || force) {
+            saveServerDataJSON(this.currentJSONStat, supress);
+            this.prevJSONStat = this.rebuildPrevServerJSON();
+        }
     }
     public overwriteCWDir(pDir: string, pExec?: boolean) {
         if (globalThis.DEBUG_MODE || pExec) this.srvCwd = pDir;
@@ -182,6 +192,63 @@ export abstract class MinecraftServerBase {
         this.serverProc.stdin.end();
     }
     // protected:
+    protected rebuildPrevServerJSON(): MinecraftServerData {
+        const { id, name, homeDir, work, process } = this.currentJSONStat;
+        const { jvmPath, jvmArgs, jarFile, jarArgs, rcon, proxySocketedSrv } = work;
+        const { Xmx, Xms } = jvmArgs.memory;
+        const { port, passwdMode, passwd } = rcon;
+        const { runningStatus, maintenanceMode, scheduleTime } = process;
+        const { serverExecStart, override } = scheduleTime;
+        const { dayReboot, weeklyShutdown } = override;
+        return {
+            id: id,
+            name: name,
+            homeDir: homeDir,
+            work: {
+                jvmPath: jvmPath,
+                jvmArgs: {
+                    memory: {
+                        Xmx: {
+                            amount: Xmx.amount,
+                            unit: Xmx.unit
+                        },
+                        Xms: {
+                            amount: Xms.amount,
+                            unit: Xms.unit
+                        }
+                    },
+                    extra: jvmArgs.extra
+                },
+                jarFile: jarFile,
+                jarArgs: jarArgs,
+                proxySocketedSrv: proxySocketedSrv,
+                rcon: {
+                    port: port,
+                    passwdMode: passwdMode,
+                    passwd: passwd
+                }
+            },
+            process: {
+                runningStatus: runningStatus,
+                maintenanceMode: maintenanceMode,
+                scheduleTime: {
+                    serverExecStart: serverExecStart,
+                    override: {
+                        dayReboot: {
+                            doOverride: dayReboot.doOverride,
+                            motd: dayReboot.motd,
+                            exec: dayReboot.exec
+                        },
+                        weeklyShutdown: {
+                            doOverride: weeklyShutdown.doOverride,
+                            motd: weeklyShutdown.motd,
+                            exec: weeklyShutdown.exec
+                        }
+                    }
+                }
+            }
+        };
+    }
     protected buildServerName(str?: string): string {
         if (typeof str === 'string') {
             const { WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
@@ -216,6 +283,7 @@ export abstract class MinecraftServerBase {
         return (pFrom.motd === pTgt.motd) && (pFrom.exec === pTgt.exec);
     }
     protected updateScheduleOverride(settings: scheduleTimeInfo, doOverride: boolean): scheduleTimeOverrideInfo {
+        if (!doOverride) return { doOverride: doOverride, motd: '', exec: '' };
         return { doOverride: doOverride, motd: settings.motd, exec: settings.exec };
     }
     protected buildMemoryArgs(Xmx: JVMMemoryAllocProperty, Xms: JVMMemoryAllocProperty) {
@@ -416,11 +484,113 @@ export class VelocityServer extends MinecraftServerBase {
     }
 }
 
+const hasContainServerInstanceCache = (keyword: string): boolean => {
+    let result = false;
+    const { SRVINST_CACHE } = globalThis.MCSERV_CONTROLLER_ENV;
+    SRVINST_CACHE.forEach((cache) => {
+        if (result) return;
+        if (cache === keyword) result = true;
+    });
+    return result;
+};
+
+const compareServerJSONInfo = (base: MinecraftServerData, comp: MinecraftServerData) => {
+    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+    const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    /*
+    変更可能:
+    - name
+    - work
+      - jvmArgs
+        - memory
+          - Xmx
+           -Xms
+        - extra
+      - jarFile
+      - jarArgs
+      - proxySocketedSrv
+    - process
+      - runningStatus
+      - maintenanceMode
+      - scheduleTime
+        - serverExecStart
+        - override
+          - dayReboot, weeklyShutdown
+            - doOverride
+            - motd
+            - exec
+     */
+    type checkJSON = Readonly<{
+        name: string,
+        work: {
+            jvmArgs: {
+                memory: {
+                    Xmx: JVMMemoryAllocProperty,
+                    Xms: JVMMemoryAllocProperty
+                },
+                extra: string
+            },
+            jarFile: string,
+            jarArgs: string,
+            proxySocketedSrv: string[] | null
+        },
+        process: {
+            runningStatus: string,
+            maintenanceMode: boolean,
+            scheduleTime: {
+                serverExecStart: string,
+                override: {
+                    dayReboot: {
+                        doOverride: boolean,
+                        motd: string,
+                        exec: string
+                    },
+                    weeklyShutdown: {
+                        doOverride: boolean,
+                        motd: string,
+                        exec: string
+                    }
+                }
+            }
+        }
+    }>;
+    const bJSONTgt: checkJSON = {
+        name: base.name,
+        work: {
+            jvmArgs: base.work.jvmArgs,
+            jarFile: base.work.jarFile,
+            jarArgs: base.work.jarArgs,
+            proxySocketedSrv: base.work.proxySocketedSrv
+        },
+        process: base.process
+    };
+    const cJSONTgt: checkJSON = {
+        name: comp.name,
+        work: {
+            jvmArgs: comp.work.jvmArgs,
+            jarFile: comp.work.jarFile,
+            jarArgs: comp.work.jarArgs,
+            proxySocketedSrv: comp.work.proxySocketedSrv
+        },
+        process: comp.process
+    };
+    if (DEBUG_MODE) emitLog(DEBUG, `PrevStat: ${bJSONTgt.process.runningStatus} / CurrentStat: ${cJSONTgt.process.runningStatus}`);
+    const result = isEqual(bJSONTgt, cJSONTgt);
+    if (DEBUG_MODE) emitLog(DEBUG, `Checking server_data.json status [RESULT: ${result}]`);
+    return result;
+};
+
 export const generateServerInstance = (): void => {
-    const { SERVER_CONFIG_INFO } = globalThis.MCSERV_CONTROLLER_ENV;
+    let detectNotMatch = false;
+    loadCacheFile();
+    const { SERVER_CONFIG_INFO, SRVINST_CACHE } = globalThis.MCSERV_CONTROLLER_ENV;
     const { INFO } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     SERVER_CONFIG_INFO.forEach((serverJSON) => {
-        const { jarArgs } = serverJSON.work;
+        const { id, work } = serverJSON;
+        if (!hasContainServerInstanceCache(id)) serverJSON.process.runningStatus = 'UNDEFINED';
+        else serverJSON.process.runningStatus = serverJSON.process.runningStatus === 'RUNNING' ? 'STOPPED' :
+            serverJSON.process.runningStatus;
+        const { jarArgs } = work;
         if (/velocity|bungeecord|waterfall|lightfall/i.test(jarArgs)) {
             emitLog(INFO, `The Server Instance "${serverJSON.id}" is Proxy Server.`);
             globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES.push(new VelocityServer(serverJSON));
@@ -428,7 +598,12 @@ export const generateServerInstance = (): void => {
             emitLog(INFO, `The Server Instance "${serverJSON.id}" is Runner Server (like Forge, Paper, Fabric).`);
             globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES.push(new MinecraftServer(serverJSON));
         }
+        SRVINST_CACHE.forEach((cache) => {
+            if (!detectNotMatch) detectNotMatch = serverJSON.id === cache;
+        });
+        if (!detectNotMatch) SRVINST_CACHE.push(serverJSON.id);
     });
+    writeCacheFile();
 };
 
 export const searchServerInstance = (keyword: string, optIdx?: number): { success: boolean, result: searchResultInfo } => {

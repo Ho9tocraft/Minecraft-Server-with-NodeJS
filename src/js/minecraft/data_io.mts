@@ -33,7 +33,7 @@ export const loadGlobalDataJSON = (): GlobalData => {
     return (loadJSONFile(GDJSON_PATH, validator.globalData) as GlobalData);
 };
 
-export const saveServerDataJSON = (jsonObj: MinecraftServerData): void => {
+export const saveServerDataJSON = (jsonObj: MinecraftServerData, supress?: boolean): void => {
     const { SERVER_CONFIG_INFO, CONFIG_VALIDATE_INFO } = globalThis.MCSERV_CONTROLLER_ENV;
     const { SDJSON_PATH, SDVALIDATE_PATH } = CONFIG_VALIDATE_INFO;
     validator.serverData = validator.serverData || loadJSONFile(SDVALIDATE_PATH);
@@ -44,13 +44,13 @@ export const saveServerDataJSON = (jsonObj: MinecraftServerData): void => {
     });
     uploadServerDataJSON(replSDataArray);
     const finSrvDataJSON: ServerDataJSON = { servers: globalThis.MCSERV_CONTROLLER_ENV.SERVER_CONFIG_INFO };
-    saveJSONFile(finSrvDataJSON, SDJSON_PATH, validator.serverData);
+    saveJSONFile(finSrvDataJSON, SDJSON_PATH, validator.serverData, supress);
 };
 
-export const saveGlobalDataJSON = (jsonObj: GlobalData): void => {
+export const saveGlobalDataJSON = (jsonObj: GlobalData, supress?: boolean): void => {
     const { GDJSON_PATH, GDVALIDATE_PATH } = globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO;
     validator.globalData = validator.globalData || loadJSONFile(GDVALIDATE_PATH);
-    saveJSONFile(jsonObj, GDJSON_PATH, validator.globalData);
+    saveJSONFile(jsonObj, GDJSON_PATH, validator.globalData, supress);
 };
 
 export const isAccessableNeededFiles = (): boolean => {
