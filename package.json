@@ -51,6 +51,7 @@
     "@types/express": "^5.0.6",
     "@types/lodash": "^4.17.24",
     "@types/node": "^25.4.0",
+    "@types/write-file-atomic": "^4.0.3",
     "dale-chall": "^2.0.1",
     "ts-node": "^10.9.2"
   }

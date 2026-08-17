@@ -3,7 +3,7 @@ import { ChildProcess, spawn } from 'child_process';
 import { TextDecoder } from 'util';
 import { Buffer } from 'buffer';
 import { setTimeout } from 'timers';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import _ from 'lodash';
 import { checkHaveDangerUnicode, decryptEncryptedStr, decryptRconPasswd } from '../general_utils/decryption_utils.mjs';
 import { Rcon } from '../rcon.mjs';
@@ -11,731 +11,876 @@ import { emitLog } from '../general_utils/logger_utils.mjs';
 import { buildExecBinEnv } from '../general_utils/string_utils.mjs';
 import { saveServerDataJSON } from './data_io.mjs';
 import { loadCacheFile, writeCacheFile } from '../general_utils/json_utils.mjs';
+import { StringDecoder } from 'string_decoder';
 const { from } = Buffer;
 const { isEqual } = _;
 const isWin = /windows/i.test(OSType().toString());
 
-type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'RUNNING' | 'CRASHED';
+/**
+ * UNDEFINED: 未定義 \
+ * STOPPED: 起動していない \
+ * STARTING: 起動処理中 \
+ * RUNNING: 起動中 \
+ * CRASHED: 低～中深刻度クラッシュ \
+ * FORCE_STOPPED: 強制停止済み \
+ * DEPLETED: 高深刻度クラッシュ(強制停止できないなど)
+ */
+type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'STARTING' | 'RUNNING' | 'CRASHED' | 'FORCE_STOPPED' | 'DEPLETED';
+type LogSource = 'stdout' | 'stderr';
 type searchResultInfo = {
-    idx: number;
-    name: string;
+  idx: number;
+  name: string;
 };
 
-const rconStartedRegExp = /RCON running on/;
-const proxyStartedRegExp = /Done \([0-9]+(\.[0-9]*)?s\)\u0021/;
+const startedRegExp = /Done \([0-9]+(\.[0-9]*)?s\)\u0021/;
 
 export abstract class MinecraftServerBase {
+  /**
+   * [PROTECTED] Previous MinecraftServerData JSON
+   */
+  protected prevJSONStat: MinecraftServerData;
+  /**
+   * [PROTECTED] Request flags of server
+   */
+  protected requestFlag: {
     /**
-     * [PROTECTED] Previous MinecraftServerData JSON
+     * condition of stop request
+     * @default false
      */
-    protected prevJSONStat: MinecraftServerData;
+    stop: boolean,
     /**
-     * [PROTECTED] A condition variable for restartServer()
-     * @default 0
+     * conditions of reboot request
+     * @default false
      */
-    protected _restartCond_: number;
+    reboot: boolean,
     /**
-     * [PUBLIC] Current MinecraftServerData JSON
+     * conditions of forced stop
+     * @default false
      */
-    public currentJSONStat: MinecraftServerData;
+    forcedStop: boolean,
+  };
+  /**
+   * [PROTECTED] Server stop timer
+   */
+  protected stopTimer: NodeJS.Timeout | null = null;
+  /**
+   * [PUBLIC] Current MinecraftServerData JSON
+   */
+  public currentJSONStat: MinecraftServerData;
+  /**
+   * [PUBLIC] Server ID
+   */
+  public srvId: string;
+  /**
+   * [PUBLIC] Server Name
+   */
+  public srvName: string;
+  /**
+   * [PUBLIC] Server Current Working Directory
+   */
+  public srvCwd: string;
+  /**
+   * [PUBLIC] Java (JVM) Binary Path
+   */
+  public javaBinPath: string;
+  /**
+   * [PUBLIC] Java (JVM) Binary Arguments (for child_process.spawn)
+   */
+  public javaBinArgs: string[];
+  /**
+   * [PUBLIC] Proxy Socketed Server List
+   */
+  public proxySocketSrv: string[] | null;
+  /**
+   * [PUBLIC] RCON Compatibles
+   */
+  public rconCompatible: boolean;
+  /**
+   * [PUBLIC] RCON Port
+   */
+  public rconPort: number;
+  /**
+   * [PUBLIC] RCON Password (raw)
+   */
+  public rconPasswd: string;
+  /**
+   * [PUBLIC] RCON Client
+   */
+  public rconClient: {
     /**
-     * [PUBLIC] Server ID
+     * RCON Instance
+     * @default null
      */
-    public srvId: string;
+    Inst: Rcon | null,
     /**
-     * [PUBLIC] Server Name
+     * RCON Authorized
+     * @default false
      */
-    public srvName: string;
+    Auth: boolean,
     /**
-     * [PUBLIC] Server Current Working Directory
+     * RCON Queued Commands
+     * @default []
      */
-    public srvCwd: string;
+    QueuedCmds: string[]
+  };
+  /**
+   * [PUBLIC] Running Status
+   * @default 'UNDEFINED'
+   */
+  public runningStat: RunningStatus;
+  /**
+   * [PUBLIC] Running Results for WebUI
+   */
+  public runningResult: {
     /**
-     * [PUBLIC] Java (JVM) Binary Path
+     * Result of startServer()
      */
-    public javaBinPath: string;
+    rStart: boolean,
     /**
-     * [PUBLIC] Java (JVM) Binary Arguments (for child_process.spawn)
+     * Result of stopServer()
      */
-    public javaBinArgs: string[];
+    rStop: boolean,
     /**
-     * [PUBLIC] Proxy Socketed Server List
+     * Result of observerServer()
      */
-    public proxySocketSrv: string[] | null;
-    /**
-     * [PUBLIC] RCON Compatibles
-     */
-    public rconCompatible: boolean;
-    /**
-     * [PUBLIC] RCON Port
-     */
-    public rconPort: number;
-    /**
-     * [PUBLIC] RCON Password (raw)
-     */
-    public rconPasswd: string;
-    /**
-     * [PUBLIC] RCON Client
-     */
-    public rconClient: {
-        /**
-         * RCON Instance
-         * @default null
-         */
-        Inst: Rcon | null,
-        /**
-         * RCON Authorized
-         * @default false
-         */
-        Auth: boolean,
-        /**
-         * RCON Queued Commands
-         * @default []
-         */
-        QueuedCmds: string[]
-    };
-    /**
-     * [PUBLIC] Running Status
-     * @default 'UNDEFINED'
-     */
-    public runningStat: RunningStatus;
-    /**
-     * [PUBLIC] Running Results for WebUI
-     */
-    public runningResult: {
-        /**
-         * Result of startServer()
-         */
-        rStart: boolean,
-        /**
-         * Result of stopServer()
-         */
-        rStop: boolean,
-        /**
-         * Result of observerServer()
-         */
-        rObserve: boolean
-    };
-    /**
-     * [PUBLIC] Maintenance Mode Switch
-     */
-    public mayMaintenance: boolean;
-    /**
-     * [PUBLIC] Server Scheduled Starting Up  
-     * ONLY CRON STRINGS
-     */
-    public execStart: string;
-    /**
-     * [PUBLIC] Server Scheduled Rebooting
-     */
-    public scheduleReboot: scheduleTimeInfo;
-    /**
-     * [PUBLIC] Server Scheduled Stopping
-     */
-    public scheduleShutdown: scheduleTimeInfo;
-    /**
-     * [PUBLIC] Server Process (ChildProcess)
-     */
-    public serverProc: ChildProcess | null;
-    /**
-     * [PUBLIC] Stop Command
-     */
-    public stopCmd: 'stop' | 'end';
+    rObserve: boolean
+  };
+  /**
+   * [PUBLIC] Maintenance Mode Switch
+   */
+  public mayMaintenance: boolean;
+  /**
+   * [PUBLIC] Server Scheduled Starting Up
+   * ONLY CRON STRINGS
+   */
+  public execStart: string;
+  /**
+   * [PUBLIC] Server Scheduled Rebooting
+   */
+  public scheduleReboot: scheduleTimeInfo;
+  /**
+   * [PUBLIC] Server Scheduled Stopping
+   */
+  public scheduleShutdown: scheduleTimeInfo;
+  /**
+   * [PUBLIC] Server Process (ChildProcess)
+   */
+  public serverProc: ChildProcess | null;
+  /**
+   * [PUBLIC] Stop Command
+   */
+  public stopCmd: 'stop' | 'end';
 
-    // public:
-    public constructor(serverJSON: MinecraftServerData) {
-        this.currentJSONStat = serverJSON;
-        const { id, name, homeDir, work, process } = this.currentJSONStat;
-        const { jvmPath, jvmArgs, jarFile, jarArgs, rcon } = work;
-        const { Xmx, Xms } = jvmArgs.memory;
-        const { port, passwdMode, passwd } = rcon;
-        const { runningStatus, maintenanceMode, scheduleTime } = process;
-        const { serverExecStart, override } = scheduleTime;
-        const { dayReboot, weeklyShutdown } = override;
-        const { dayReboot: glbDR, weeklyShutdown: glbWS } = globalThis.MCSERV_CONTROLLER_ENV.GLOBAL_CONFIG.global_data.serverScheduleTime;
-        const tmpDR: Readonly<scheduleTimeInfo> = { motd: dayReboot.motd, exec: dayReboot.exec };
-        const tmpWS: Readonly<scheduleTimeInfo> = { motd: weeklyShutdown.motd, exec: weeklyShutdown.exec };
+  // public:
+  public constructor(serverJSON: MinecraftServerData) {
+    this.currentJSONStat = serverJSON;
+    const { id, name, homeDir, work, process } = this.currentJSONStat;
+    const { jvmPath, jvmArgs, jarFile, jarArgs, rcon } = work;
+    const { Xmx, Xms } = jvmArgs.memory;
+    const { port, passwdMode, passwd } = rcon;
+    const { runningStatus, maintenanceMode, scheduleTime } = process;
+    const { serverExecStart, override } = scheduleTime;
+    const { dayReboot, weeklyShutdown } = override;
+    const { dayReboot: glbDR, weeklyShutdown: glbWS } = globalThis.MCSERV_CONTROLLER_ENV.GLOBAL_CONFIG.global_data.serverScheduleTime;
+    const tmpDR: Readonly<scheduleTimeInfo> = { motd: dayReboot.motd, exec: dayReboot.exec };
+    const tmpWS: Readonly<scheduleTimeInfo> = { motd: weeklyShutdown.motd, exec: weeklyShutdown.exec };
 
-        this.prevJSONStat = this.rebuildPrevServerJSON();
+    this.prevJSONStat = this.rebuildPrevServerJSON();
 
-        this.srvId = id;
-        this.srvName = this.buildServerName(name);
-        this.srvCwd = this.buildCWDir(homeDir);
-        this.javaBinPath = buildExecBinEnv(this.buildJVMBinPath(jvmPath));
-        this.javaBinArgs = this.buildLaunchCode(this.combineJVMArgs(this.buildMemoryArgs(Xmx, Xms), jvmArgs.extra, jarFile, jarArgs));
-        this.proxySocketSrv = null;
-        this.rconCompatible = false;
-        this.rconPort = port;
-        this.rconPasswd = this.buildRconPasswd(passwdMode, passwd);
-        this.rconClient = {
-            Inst: null,
-            Auth: false,
-            QueuedCmds: []
-        };
-        this.runningStat = this.convertToRunningStatus(runningStatus);
-        this.runningResult = {
-            rStart: false,
-            rStop: false,
-            rObserve: false
-        };
-        this.mayMaintenance = maintenanceMode;
-        this.execStart = serverExecStart;
-        this.scheduleReboot = dayReboot.doOverride ? tmpDR : glbDR;
-        this.scheduleShutdown = weeklyShutdown.doOverride ? tmpWS : glbWS;
-        this.serverProc = null;
-        this.stopCmd = 'stop';
-        this._restartCond_ = 0;
-        this.writeCurrentJSONProcStat(true, true);
-    }
-    public get restartCond(): number {
-        return this._restartCond_;
-    }
-    public rebuildProcProperties(): void {
-        const { runningStatus, maintenanceMode, scheduleTime } = this.currentJSONStat.process;
-        const { serverExecStart, override } = scheduleTime;
-        const { dayReboot, weeklyShutdown } = override;
-        const tmpDR: Readonly<scheduleTimeInfo> = { motd: dayReboot.motd, exec: dayReboot.exec };
-        const tmpWS: Readonly<scheduleTimeInfo> = { motd: weeklyShutdown.motd, exec: weeklyShutdown.exec };
-        if (this.runningStat !== runningStatus) this.runningStat = this.convertToRunningStatus(runningStatus);
-        if (this.mayMaintenance !== maintenanceMode) this.mayMaintenance = maintenanceMode;
-        if (this.execStart !== serverExecStart) this.execStart = serverExecStart;
-        if (!this.compareScheduleInfo(this.scheduleReboot, tmpDR)) this.scheduleReboot = tmpDR;
-        if (!this.compareScheduleInfo(this.scheduleShutdown, tmpWS)) this.scheduleShutdown = tmpWS;
-        this.writeCurrentJSONProcStat();
+    this.srvId = id;
+    this.srvName = this.buildServerName(name);
+    this.srvCwd = this.buildCWDir(homeDir);
+    this.javaBinPath = buildExecBinEnv(this.buildJVMBinPath(jvmPath));
+    this.javaBinArgs = this.buildLaunchCode(this.combineJVMArgs(this.buildMemoryArgs(Xmx, Xms), jvmArgs.extra, jarFile, jarArgs));
+    this.proxySocketSrv = null;
+    this.rconCompatible = false;
+    this.rconPort = port;
+    this.rconPasswd = this.buildRconPasswd(passwdMode, passwd);
+    this.rconClient = {
+      Inst: null,
+      Auth: false,
+      QueuedCmds: []
     };
-    public writeCurrentJSONProcStat(force?: boolean, supress?: boolean): void {
-        const tmpDROR: boolean = this.currentJSONStat.process.scheduleTime.override.dayReboot.doOverride;
-        const tmpWSOR: boolean = this.currentJSONStat.process.scheduleTime.override.weeklyShutdown.doOverride;
-        this.currentJSONStat.process.runningStatus = this.runningStat;
-        this.currentJSONStat.process.maintenanceMode = this.mayMaintenance;
-        this.currentJSONStat.process.scheduleTime.serverExecStart = this.execStart;
-        this.currentJSONStat.process.scheduleTime.override.dayReboot = this.updateScheduleOverride(this.scheduleReboot, tmpDROR);
-        this.currentJSONStat.process.scheduleTime.override.weeklyShutdown = this.updateScheduleOverride(this.scheduleShutdown, tmpWSOR);
-        if (!compareServerJSONInfo(this.prevJSONStat, this.currentJSONStat) || force) {
-            saveServerDataJSON(this.currentJSONStat, supress);
-            this.prevJSONStat = this.rebuildPrevServerJSON();
-        }
+    this.runningStat = this.convertToRunningStatus(runningStatus);
+    this.runningResult = {
+      rStart: false,
+      rStop: false,
+      rObserve: false
+    };
+    this.mayMaintenance = maintenanceMode;
+    this.execStart = serverExecStart;
+    this.scheduleReboot = dayReboot.doOverride ? tmpDR : glbDR;
+    this.scheduleShutdown = weeklyShutdown.doOverride ? tmpWS : glbWS;
+    this.serverProc = null;
+    this.stopCmd = 'stop';
+    this.requestFlag = {
+      forcedStop: false,
+      stop: false,
+      reboot: false
+    };
+    this.writeCurrentJSONProcStat(true, true);
+  }
+  public rebuildProcProperties(): void {
+    const { runningStatus, maintenanceMode, scheduleTime } = this.currentJSONStat.process;
+    const { serverExecStart, override } = scheduleTime;
+    const { dayReboot, weeklyShutdown } = override;
+    const tmpDR: Readonly<scheduleTimeInfo> = { motd: dayReboot.motd, exec: dayReboot.exec };
+    const tmpWS: Readonly<scheduleTimeInfo> = { motd: weeklyShutdown.motd, exec: weeklyShutdown.exec };
+    if (this.runningStat !== runningStatus) this.runningStat = this.convertToRunningStatus(runningStatus);
+    if (this.mayMaintenance !== maintenanceMode) this.mayMaintenance = maintenanceMode;
+    if (this.execStart !== serverExecStart) this.execStart = serverExecStart;
+    if (!this.compareScheduleInfo(this.scheduleReboot, tmpDR)) this.scheduleReboot = tmpDR;
+    if (!this.compareScheduleInfo(this.scheduleShutdown, tmpWS)) this.scheduleShutdown = tmpWS;
+    this.writeCurrentJSONProcStat();
+  };
+  public writeCurrentJSONProcStat(force?: boolean, supress?: boolean): void {
+    const tmpDROR: boolean = this.currentJSONStat.process.scheduleTime.override.dayReboot.doOverride;
+    const tmpWSOR: boolean = this.currentJSONStat.process.scheduleTime.override.weeklyShutdown.doOverride;
+    this.currentJSONStat.process.runningStatus = this.runningStat;
+    this.currentJSONStat.process.maintenanceMode = this.mayMaintenance;
+    this.currentJSONStat.process.scheduleTime.serverExecStart = this.execStart;
+    this.currentJSONStat.process.scheduleTime.override.dayReboot = this.updateScheduleOverride(this.scheduleReboot, tmpDROR);
+    this.currentJSONStat.process.scheduleTime.override.weeklyShutdown = this.updateScheduleOverride(this.scheduleShutdown, tmpWSOR);
+    if (!compareServerJSONInfo(this.prevJSONStat, this.currentJSONStat) || force) {
+      saveServerDataJSON(this.currentJSONStat, supress);
+      this.prevJSONStat = this.rebuildPrevServerJSON();
     }
-    public overwriteCWDir(pDir: string, pExec?: boolean) {
-        if (globalThis.DEBUG_MODE || pExec) this.srvCwd = pDir;
+  }
+  public overwriteCWDir(pDir: string, pExec?: boolean) {
+    if (globalThis.DEBUG_MODE || pExec) this.srvCwd = pDir;
+  }
+  public startServer(): void {
+    this.runningResult.rStop = false;
+    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis
+    const { FATAL, WARN, LOG, DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    if (DEBUG_MODE) emitLog(DEBUG, 'startServer() Called.');
+    if (this.serverProc !== null && this.serverProc.exitCode === null) {
+      emitLog(FATAL, `The Server Process "${this.srvId}" is already generated!`);
+      return;
     }
-    public startServer(): void {
-        this.runningResult.rStop = false;
-        const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis
-        const { FATAL, WARN, LOG, DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-        if (DEBUG_MODE) emitLog(DEBUG, 'startServer() Called.');
-        if (this.serverProc !== null && this.serverProc.exitCode === null) {
-            emitLog(FATAL, `The Server Process "${this.srvId}" is already generated!`);
-            return;
-        }
-        this.serverProc = null;
-        if (this.runningStat === 'UNDEFINED') emitLog(LOG, `The Server "${this.srvId}" doesn't appear to have been started.`);
-        else {
-            emitLog(LOG, `The Status of "${this.srvId}" at its prev-startup was ${this.runningStat}`);
-            if (this.runningStat === 'CRASHED') {
-                emitLog(WARN, `CRASHED!? I'll proceed with startup, considering the issue of crash resolved.`);
-            }
-            this.runningStat = this.runningStat !== 'STOPPED' ? 'STOPPED' : this.runningStat;
-            this.writeCurrentJSONProcStat();
-        }
-        emitLog(LOG, `The Server Process "${this.srvId}" starting...`);
-        this.initServerProc();
+    this.serverProc = null;
+    if (this.runningStat === 'UNDEFINED') emitLog(LOG, `The Server "${this.srvId}" doesn't appear to have been started.`);
+    else if (this.runningStat === 'DEPLETED') {
+      if (this.mayMaintenance) {
+        emitLog(FATAL, `DO NOT STARTING UP THIS SERVER!! IT'S DEPLETED!!`);
+        return;
+      } else {
+        emitLog(WARN, `DEPLETED!? AT YOUR OWN RISK!!`);
+      }
     }
-    public observeServer(): void {
-        this.runningResult.rObserve = true;
-        if (this.serverProc === null || this.runningStat !== 'RUNNING') {
-            this.runningResult.rObserve = false;
-            return;
-        }
-        if (!(typeof this.serverProc.exitCode === 'undefined' || this.serverProc.exitCode === null)) {
-            this.runningResult.rObserve = false;
-            return;
-        }
-        if (this.detectCrash()) {
-            const { ERROR } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-            emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on previous launching.`));
-            this.mayMaintenance = true;
-            this.writeCurrentJSONProcStat();
-        }
+    else {
+      emitLog(LOG, `The Status of "${this.srvId}" at its prev-startup was ${this.runningStat}`);
+      if (this.runningStat === 'CRASHED') {
+        emitLog(WARN, `CRASHED!? I'll proceed with startup, considering the issue of crash resolved.`);
+      }
     }
-    public stopServer(): void {
-        const { ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-        this.runningResult.rStart = false;
-        if (this.serverProc === null || this.runningStat !== 'RUNNING') {
-            emitLog(ERROR, `The Server "${this.srvId}" isn't RUNNING.`);
-        }
-        else {
-            emitLog(LOG, `The Server Process "${this.srvId}" stopping.`);
-            this.instantRCONCommand(this.stopCmd);
-        }
+    this.runningStat = 'STARTING';
+    this.writeCurrentJSONProcStat();
+    emitLog(LOG, `The Server Process "${this.srvId}" starting...`);
+    this.initServerProc();
+  }
+  public observeServer(): void {
+    this.runningResult.rObserve = true;
+    if (this.serverProc === null || this.runningStat !== 'RUNNING') {
+      this.runningResult.rObserve = false;
+      return;
     }
-    public restartServer(): void {
-        if (this.serverProc === null || this.runningStat !== 'RUNNING') return;
-        this.restartCond = this.restartCond > 0 ? this.restartCond : 1; // デバッグ時にMinecraftServerBase.restartCondを多く設定していた場合の特殊裁定
-        this.stopServer();
+    if (!(typeof this.serverProc.exitCode === 'undefined' || this.serverProc.exitCode === null)) {
+      this.runningResult.rObserve = false;
+      return;
     }
-    public abstract instantRCONCommand(cmd: string): void;
-    public instantStdinCommand(cmd: string): void {
-        if (this.serverProc === null || this.runningStat !== 'RUNNING') return;
-        if (this.serverProc.stdin === null) return;
-        this.serverProc.stdin.write(`${this.commandMessageFixing(cmd)}\r`);
-        this.serverProc.stdin.end();
+    if (this.detectCrash()) {
+      const { ERROR } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+      emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on previous launching.`));
+      this.runningStat = 'CRASHED';
+      this.mayMaintenance = true;
+      this.writeCurrentJSONProcStat();
     }
-    /**
-     * [PUBLIC][DEBUG-ONLY] MinecraftServerBase.restartCondを上書きします。
-     * @param value restartCondへ代入する数値(1以上)
-     * @deprecated デバッグ時にのみ使用。通常時は起動しないが、globalThis.DEBUG_MODEを上書きしている場合は発動する。リリース時は排除必須。
-     */
-    public overwriteRestardCond(value: number): void {
-        if (globalThis.DEBUG_MODE) this.restartCond = value > 0 ? value : 0;
+  }
+  public stopServer(): void {
+    const { ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    this.runningResult.rStart = false;
+    if (this.serverProc === null || this.runningStat !== 'RUNNING') {
+      emitLog(ERROR, `The Server "${this.srvId}" isn't RUNNING.`);
     }
-    // protected:
-    protected set restartCond(value: number) {
-        this._restartCond_ = value > 0 ? value : 0;
+    else {
+      const prevProc = this.serverProc;
+      emitLog(LOG, `The Server Process "${this.srvId}" stopping.`);
+      this.requestFlag.stop = true;
+      this.runStopTimer(prevProc);
+      this.instantRCONCommand(this.stopCmd);
     }
-    protected rebuildPrevServerJSON(): MinecraftServerData {
-        const { id, name, homeDir, work, process } = this.currentJSONStat;
-        const { jvmPath, jvmArgs, jarFile, jarArgs, rcon, proxySocketedSrv } = work;
-        const { Xmx, Xms } = jvmArgs.memory;
-        const { port, passwdMode, passwd } = rcon;
-        const { runningStatus, maintenanceMode, scheduleTime } = process;
-        const { serverExecStart, override } = scheduleTime;
-        const { dayReboot, weeklyShutdown } = override;
-        return {
-            id: id,
-            name: name,
-            homeDir: homeDir,
-            work: {
-                jvmPath: jvmPath,
-                jvmArgs: {
-                    memory: {
-                        Xmx: {
-                            amount: Xmx.amount,
-                            unit: Xmx.unit
-                        },
-                        Xms: {
-                            amount: Xms.amount,
-                            unit: Xms.unit
-                        }
-                    },
-                    extra: jvmArgs.extra
-                },
-                jarFile: jarFile,
-                jarArgs: jarArgs,
-                proxySocketedSrv: proxySocketedSrv,
-                rcon: {
-                    port: port,
-                    passwdMode: passwdMode,
-                    passwd: passwd
-                }
+  }
+  public restartServer(): void {
+    if (this.serverProc === null || this.runningStat !== 'RUNNING') return;
+    this.requestFlag.reboot = true;
+    this.stopServer();
+  }
+  public abstract instantRCONCommand(cmd: string): void;
+  public instantStdinCommand(cmd: string): void {
+    if (this.serverProc === null || this.runningStat !== 'RUNNING') return;
+    if (this.serverProc.stdin === null) return;
+    this.serverProc.stdin.write(`${this.commandMessageFixing(cmd)}\r`);
+  }
+  // protected:
+  /**
+   * Binds ChildProcess's Outputs.
+   * @param stream ChildProcess's stdout/stderr
+   * @param source Readable stream type (stdout/stderr)
+   */
+  protected bindProcessOut(stream: NodeJS.ReadableStream | null, source: LogSource): void {
+    if (stream === null) return;
+
+    const decoder = new StringDecoder('utf-8');
+    let remaining = '';
+    stream.on('data', (chunk: Buffer) => {
+      remaining += decoder.write(chunk);
+
+      const lines = remaining.split(/\r?\n/);
+      remaining = lines.pop() ?? '';
+      for (const line of lines) { this.handleServerLog(source, line); }
+    }).on('end', () => {
+      const lastLine = `${remaining}${decoder.end()}`.trim();
+      if (lastLine.length > 0) this.handleServerLog(source, lastLine);
+    });
+  }
+
+  /**
+   * Handling Server Logs
+   * @param source Readable stream type (stdout/stderr)
+   * @param line output lines
+   */
+  protected handleServerLog(source: LogSource, line: string): void {
+    const { LOG, ERROR } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    const LOGLEVEL: string = source === 'stderr' ? ERROR : LOG;
+
+    emitLog(LOGLEVEL, line, { optStr: `[${this.srvId}][${source.toUpperCase()}]` });
+
+    if (source !== 'stdout' || this.runningStat !== 'STARTING') return;
+
+    if (startedRegExp.test(line)) {
+      emitLog(LOG, `The ${!this.rconCompatible ? 'Proxy ' : ''}Server Process "${this.srvId}" starting up success.`);
+
+      this.runningStat = 'RUNNING';
+      this.runningResult.rStart = true;
+      if (this.rconCompatible) this.initRconClient();
+      this.writeCurrentJSONProcStat();
+      return;
+    }
+
+    if (this.detectCrash(line)) {
+      emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server "${this.srvId}" starting up FAILED.`));
+      this.runningStat = 'CRASHED';
+      this.mayMaintenance = true;
+      this.writeCurrentJSONProcStat();
+    }
+  }
+
+  protected rebuildPrevServerJSON(): MinecraftServerData {
+    const { id, name, homeDir, work, process } = this.currentJSONStat;
+    const { jvmPath, jvmArgs, jarFile, jarArgs, rcon, proxySocketedSrv } = work;
+    const { Xmx, Xms } = jvmArgs.memory;
+    const { port, passwdMode, passwd } = rcon;
+    const { runningStatus, maintenanceMode, scheduleTime } = process;
+    const { serverExecStart, override } = scheduleTime;
+    const { dayReboot, weeklyShutdown } = override;
+    return {
+      id: id,
+      name: name,
+      homeDir: homeDir,
+      work: {
+        jvmPath: jvmPath,
+        jvmArgs: {
+          memory: {
+            Xmx: {
+              amount: Xmx.amount,
+              unit: Xmx.unit
             },
-            process: {
-                runningStatus: runningStatus,
-                maintenanceMode: maintenanceMode,
-                scheduleTime: {
-                    serverExecStart: serverExecStart,
-                    override: {
-                        dayReboot: {
-                            doOverride: dayReboot.doOverride,
-                            motd: dayReboot.motd,
-                            exec: dayReboot.exec
-                        },
-                        weeklyShutdown: {
-                            doOverride: weeklyShutdown.doOverride,
-                            motd: weeklyShutdown.motd,
-                            exec: weeklyShutdown.exec
-                        }
-                    }
-                }
+            Xms: {
+              amount: Xms.amount,
+              unit: Xms.unit
             }
-        };
-    }
-    protected buildServerName(str?: string): string {
-        if (typeof str === 'string') {
-            const { WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-            try {
-                const trimedStr = str.trim();
-                if (trimedStr.length !== 0) {
-                    const testhead = new TextDecoder('utf-8', { fatal: true }).decode(from(trimedStr, 'utf-8'));
-                    if (!checkHaveDangerUnicode(testhead)) return testhead;
-                    else emitLog(WARN, 'Input Server Name has Dangerous UTF-8');
-                }
-            } catch {
-                emitLog(WARN, 'Input Server Name has Dangerous UTF-8');
-            }
+          },
+          extra: jvmArgs.extra
+        },
+        jarFile: jarFile,
+        jarArgs: jarArgs,
+        proxySocketedSrv: proxySocketedSrv,
+        rcon: {
+          port: port,
+          passwdMode: passwdMode,
+          passwd: passwd
         }
-        return this.autoGenerateServerName();
-    }
-    protected buildCWDir(homeDir: string): string {
-        return `${globalThis.MCSERV_CONTROLLER_ENV.GLOBAL_CONFIG.global_data.mcsRootDir}/${homeDir}`;
-    }
-    protected autoGenerateServerName(): string {
-        const disassStr = this.srvId.trim().split('_');
-        let upperShiftedStr: string[] = [];
-        disassStr.forEach((str) => {
-            upperShiftedStr.push(`${str.charAt(0).toUpperCase()}${str.slice(1).toLowerCase()}`);
-        });
-        return upperShiftedStr.join(' ');
-    }
-    protected autoMaintenanceModeMessage(message: string): string {
-        return `${message} Automatic shift to Maintenance Mode.`;
-    }
-    protected compareScheduleInfo(pFrom: scheduleTimeInfo, pTgt: scheduleTimeInfo): boolean {
-        return (pFrom.motd === pTgt.motd) && (pFrom.exec === pTgt.exec);
-    }
-    protected updateScheduleOverride(settings: scheduleTimeInfo, doOverride: boolean): scheduleTimeOverrideInfo {
-        if (!doOverride) return { doOverride: doOverride, motd: '', exec: '' };
-        return { doOverride: doOverride, motd: settings.motd, exec: settings.exec };
-    }
-    protected buildMemoryArgs(Xmx: JVMMemoryAllocProperty, Xms: JVMMemoryAllocProperty) {
-        return `-Xmx${Xmx.amount}${Xmx.unit} -Xms${Xms.amount}${Xms.unit}`;
-    }
-    protected buildJarFileArgs(file: string): string {
-        const txtFileSelector = /^@.+\.txt$/;
-        return txtFileSelector.test(file) ? file : `-jar ${file}`;
-    }
-    protected buildJVMBinPath(PorV: string): string {
-        if (/^(JAVA|JDK)[0-9]+/i.test(PorV)) {
-            const { JDK8, JDK17, JDK21 } = globalThis.MCSERV_CONTROLLER_ENV.JAVA_VERSION;
-            const prepareCode = PorV.replace(/JAVA/i, 'JDK');
-            if (prepareCode === 'JDK8') return JDK8;
-            if (prepareCode === 'JDK17') return JDK17;
-            if (prepareCode === 'JDK21') return JDK21;
-            throw new EvalError('Unsupported Java Runtime');
+      },
+      process: {
+        runningStatus: runningStatus,
+        maintenanceMode: maintenanceMode,
+        scheduleTime: {
+          serverExecStart: serverExecStart,
+          override: {
+            dayReboot: {
+              doOverride: dayReboot.doOverride,
+              motd: dayReboot.motd,
+              exec: dayReboot.exec
+            },
+            weeklyShutdown: {
+              doOverride: weeklyShutdown.doOverride,
+              motd: weeklyShutdown.motd,
+              exec: weeklyShutdown.exec
+            }
+          }
         }
-        return PorV;
-    }
-    protected combineJVMArgs(jvmMemory: string, jvmExtra: string, jarFile: string, jarArgs: string): string {
-        return `${jvmMemory} ${jvmExtra} ${this.buildJarFileArgs(jarFile)} ${jarArgs}`;
-    }
-    protected buildLaunchCode(rawArgs: string) {
-        return rawArgs.split(' ');
-    }
-    protected buildRconPasswd(mode: string, word: string): string {
-        if (mode === 'plaintext') return decryptEncryptedStr(word);
-        else if (/^(default|aes)$/.test(mode)) return decryptRconPasswd(word);
-        else return '';
-    }
-    protected convertToRunningStatus(stat: string): RunningStatus {
-        if (stat === 'STOPPED') return 'STOPPED';
-        else if (stat === 'RUNNING') return 'RUNNING';
-        else if (stat === 'CRASHED') return 'CRASHED';
-        else return 'UNDEFINED';
-    }
-    protected initServerProc(): void {
-        const { ERROR, LOG, DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-        this.serverProc = spawn(this.javaBinPath, this.javaBinArgs, { cwd: this.srvCwd });
-        this.serverProc.on('error', () => {
-            emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
-            this.runningStat = 'CRASHED';
-            this.mayMaintenance = true;
-            this.writeCurrentJSONProcStat();
-        }).on('exit', (code) => {
-            if (code === 0 && this.runningStat !== 'CRASHED') this.runningStat = 'STOPPED';
-            else this.runningStat = 'CRASHED';
-            if (this.runningStat === 'CRASHED') {
-                emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on stopping process.`));
-                this.mayMaintenance = true;
-            }
-            emitLog(LOG, `The Server Process "${this.srvId}" stopped.`);
-            this.runningResult.rStop = true;
-            this.rconClient.Inst = null;
-            this.writeCurrentJSONProcStat();
-            if (this._restartCond_ > 0) {
-                emitLog(LOG, `The Server Process "${this.srvId}" has restartCond enabled. It'll restart after a delay.`);
-                if (globalThis.DEBUG_MODE) emitLog(DEBUG, `Restart Remain(s): ${this.restartCond}`);
-                this._restartCond_--;
-                setTimeout(() => {
-                    this.startServer();
-                }, 2000);
-            }
-        });
-        this.serverProc.stdout?.on('data', (data) => {
-            const dStr: string = typeof data === 'string' ? data
-                : (data instanceof Buffer) ? data.toString('utf-8')
-                    : `${data}`;
-            if (rconStartedRegExp.test(dStr) || (!this.rconCompatible && proxyStartedRegExp.test(dStr))) {
-                emitLog(LOG, `The ${!this.rconCompatible ? 'Proxy ' : ''}Server Process "${this.srvId}" starting up SUCCESS.`);
-                this.runningStat = 'RUNNING';
-                this.runningResult.rStart = true;
-                if (this.rconCompatible) this.initRconClient();
-                this.writeCurrentJSONProcStat();
-            }
-            else if (this.detectCrash(dStr)) {
-                emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
-                this.runningStat = 'CRASHED';
-                this.mayMaintenance = true;
-                this.writeCurrentJSONProcStat();
-            }
-        });
-    }
-    protected initRconClient(): void {
-        const { ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-        const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
-        this.rconClient.QueuedCmds = [];
-        this.rconClient.Inst = new Rcon('localhost', this.rconPort, this.rconPasswd);
-        this.rconClient.Inst.on('auth', () => {
-            emitLog(LOG, 'RCon Client Authenticated', { optStr: rconLog });
-            this.rconClient.Auth = true;
-            for (const cmd of this.rconClient.QueuedCmds) {
-                if (this.rconClient.Inst === null) break;
-                this.rconClient.Inst.send(cmd, { callback: () => {
-                    if (this.rconClient.Inst !== null) this.rconClient.Inst.disconnect();
-                }});
-                if (cmd === 'stop') break;
-            }
-        }).on('response', (str) => {
-            emitLog(LOG, str, { optStr: rconLog });
-        }).on('error', (err) => {
-            emitLog(ERROR, err, { optStr: rconLog });
-        }).on('end', () => {
-            emitLog(LOG, 'Connection Closed', { optStr: rconLog });
-        });
-    }
-    protected commandMessageFixing(cmd: string): string {
-        return cmd.trim().replaceAll(/(\r|\n|\t)/g, '');
-    }
-    protected detectCrash(message?: string): boolean {
-        const crashMessage = /This crash report has been saved to/i;
-        if (typeof message === 'string') {
-            return crashMessage.test(message);
+      }
+    };
+  }
+  protected buildServerName(str?: string): string {
+    if (typeof str === 'string') {
+      const { WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+      try {
+        const trimedStr = str.trim();
+        if (trimedStr.length !== 0) {
+          const testhead = new TextDecoder('utf-8', { fatal: true }).decode(from(trimedStr, 'utf-8'));
+          if (!checkHaveDangerUnicode(testhead)) return testhead;
+          else emitLog(WARN, 'Input Server Name has Dangerous UTF-8');
         }
-        const dirCode = isWin ? '\\' : '/';
-        const LATEST_LOG = `${this.srvCwd}${dirCode}logs${dirCode}/latest.log`;
-        const file = readFileSync(LATEST_LOG, { encoding: 'utf-8' }).toString();
-        return crashMessage.test(file)
+      } catch {
+        emitLog(WARN, 'Input Server Name has Dangerous UTF-8');
+      }
     }
+    return this.autoGenerateServerName();
+  }
+  protected buildCWDir(homeDir: string): string {
+    return `${globalThis.MCSERV_CONTROLLER_ENV.GLOBAL_CONFIG.global_data.mcsRootDir}/${homeDir}`;
+  }
+  protected autoGenerateServerName(): string {
+    const disassStr = this.srvId.trim().split('_');
+    let upperShiftedStr: string[] = [];
+    disassStr.forEach((str) => {
+      upperShiftedStr.push(`${str.charAt(0).toUpperCase()}${str.slice(1).toLowerCase()}`);
+    });
+    return upperShiftedStr.join(' ');
+  }
+  protected autoMaintenanceModeMessage(message: string): string {
+    return `${message} Automatic shift to Maintenance Mode.`;
+  }
+  protected compareScheduleInfo(pFrom: scheduleTimeInfo, pTgt: scheduleTimeInfo): boolean {
+    return (pFrom.motd === pTgt.motd) && (pFrom.exec === pTgt.exec);
+  }
+  protected updateScheduleOverride(settings: scheduleTimeInfo, doOverride: boolean): scheduleTimeOverrideInfo {
+    if (!doOverride) return { doOverride: doOverride, motd: '', exec: '' };
+    return { doOverride: doOverride, motd: settings.motd, exec: settings.exec };
+  }
+  protected buildMemoryArgs(Xmx: JVMMemoryAllocProperty, Xms: JVMMemoryAllocProperty) {
+    return `-Xmx${Xmx.amount}${Xmx.unit} -Xms${Xms.amount}${Xms.unit}`;
+  }
+  protected buildJarFileArgs(file: string): string {
+    const txtFileSelector = /^@.+\.txt$/;
+    return txtFileSelector.test(file) ? file : `-jar ${file}`;
+  }
+  protected buildJVMBinPath(PorV: string): string {
+    if (/^(JAVA|JDK)[0-9]+/i.test(PorV)) {
+      const { JDK8, JDK17, JDK21 } = globalThis.MCSERV_CONTROLLER_ENV.JAVA_VERSION;
+      const prepareCode = PorV.replace(/JAVA/i, 'JDK');
+      if (prepareCode === 'JDK8') return JDK8;
+      if (prepareCode === 'JDK17') return JDK17;
+      if (prepareCode === 'JDK21') return JDK21;
+      throw new EvalError('Unsupported Java Runtime');
+    }
+    return PorV;
+  }
+  protected combineJVMArgs(jvmMemory: string, jvmExtra: string, jarFile: string, jarArgs: string): string {
+    return `${jvmMemory} ${jvmExtra} ${this.buildJarFileArgs(jarFile)} ${jarArgs}`;
+  }
+  protected buildLaunchCode(rawArgs: string) {
+    return rawArgs.split(' ');
+  }
+  protected buildRconPasswd(mode: string, word: string): string {
+    if (mode === 'plaintext') return decryptEncryptedStr(word);
+    else if (/^(default|aes)$/.test(mode)) return decryptRconPasswd(word);
+    else return '';
+  }
+  protected convertToRunningStatus(stat: string): RunningStatus {
+    if (/(?:FORCE_)?STOPPED/.test(stat)) return 'STOPPED';
+    else if (stat === 'STARTING') return 'STARTING';
+    else if (stat === 'RUNNING') return 'RUNNING';
+    else if (stat === 'CRASHED') return 'CRASHED';
+    else if (stat === 'DEPLETED') return 'DEPLETED';
+    else return 'UNDEFINED';
+  }
+  protected initServerProc(): void {
+    const { ERROR, WARN, LOG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    this.serverProc = spawn(this.javaBinPath, this.javaBinArgs, { cwd: this.srvCwd, stdio: ['pipe', 'pipe', 'pipe'] });
+
+    this.bindProcessOut(this.serverProc.stdout, 'stdout');
+    this.bindProcessOut(this.serverProc.stderr, 'stderr');
+
+    this.serverProc.on('error', () => {
+      this.clearStopTimer();
+      emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
+      this.serverProc = null;
+      this.runningStat = 'CRASHED';
+      this.mayMaintenance = true;
+      this.writeCurrentJSONProcStat();
+    }).on('exit', (code, signal) => {
+      const forcedStop = this.requestFlag.forcedStop;
+
+      this.clearStopTimer();
+      this.requestFlag.forcedStop = false;
+      const gracefulStop = this.requestFlag.stop && code === 0 && signal === null;
+      if (this.serverProc !== null) this.serverProc.stdin?.end();
+
+      this.serverProc = null;
+      this.rconClient.Inst = null;
+      this.rconClient.Auth = false;
+      this.requestFlag.stop = false;
+
+      if (forcedStop) {
+        emitLog(WARN, `The Server "${this.srvId}"'s Process was force-terminated.`);
+        this.runningStat = 'FORCE_STOPPED';
+        this.mayMaintenance = false;
+        this.runningResult.rStop = true;
+      }
+      else if (!gracefulStop) {
+        emitLog(ERROR,
+          this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" CRASHED on stopping process.`));
+        emitLog(ERROR, `The Server Process "${this.srvId}" stopped. Exit Code: ${code}`);
+        this.runningStat = 'CRASHED';
+        this.mayMaintenance = true;
+        this.requestFlag.reboot = false;
+      }
+      else {
+        emitLog(LOG, `The Server Process "${this.srvId}" stopped.`);
+        this.runningStat = 'STOPPED';
+        this.runningResult.rStop = true;
+
+        if (this.requestFlag.reboot) {
+          this.requestFlag.reboot = false;
+          emitLog(LOG, `The Server Process "${this.srvId}" has restarting enabled. It'll restart after a delay.`);
+          setTimeout(() => { this.startServer(); }, 2000);
+        }
+      }
+
+      this.writeCurrentJSONProcStat();
+    });
+  }
+  protected initRconClient(): void {
+    const { ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
+    this.rconClient.QueuedCmds = [];
+    this.rconClient.Inst = new Rcon('localhost', this.rconPort, this.rconPasswd);
+    this.rconClient.Inst.on('auth', () => {
+      emitLog(LOG, 'RCon Client Authenticated', { optStr: rconLog });
+      this.rconClient.Auth = true;
+      for (const cmd of this.rconClient.QueuedCmds) {
+        if (this.rconClient.Inst === null) break;
+        this.rconClient.Inst.send(cmd, {
+          callback: () => {
+            if (this.rconClient.Inst !== null) this.rconClient.Inst.disconnect();
+          }
+        });
+        if (cmd === 'stop') break;
+      }
+    }).on('response', (str) => {
+      emitLog(LOG, str, { optStr: rconLog });
+    }).on('error', (err) => {
+      emitLog(ERROR, err, { optStr: rconLog });
+    }).on('end', () => {
+      emitLog(LOG, 'Connection Closed', { optStr: rconLog });
+    });
+  }
+  protected commandMessageFixing(cmd: string): string {
+    return cmd.trim().replaceAll(/(\r|\n|\t)/g, '');
+  }
+  protected detectCrash(message?: string): boolean {
+    const { WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    const crashMessage = /This crash report has been saved to/i;
+    const dirCode = isWin ? '\\' : '/';
+    const LATEST_LOG = `${this.srvCwd}${dirCode}logs${dirCode}latest.log`;
+    if (typeof message === 'string') {
+      // 起動中であるはずなので評価
+      return crashMessage.test(message);
+    }
+    if (!existsSync(LATEST_LOG)) {
+      // ログが見つかっているわけではないので「クラッシュしたかどうか分からない」、よってreturn false。
+      emitLog(WARN, `Couldn't find latest.log file, you haven't even booted it up yet, have you?`);
+      return false;
+    }
+    const file = readFileSync(LATEST_LOG, { encoding: 'utf-8' }).toString();
+    return crashMessage.test(file)
+  }
+
+  protected clearStopTimer(): void {
+    if (this.stopTimer !== null) {
+      clearTimeout(this.stopTimer);
+    }
+    this.stopTimer = null;
+  }
+
+  protected runStopTimer(proc: ChildProcess): void {
+    const { FATAL, WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+
+    this.clearStopTimer();
+    this.stopTimer = setTimeout(() => {
+      if (this.serverProc !== proc || proc.exitCode !== null || !this.requestFlag.stop) return;
+
+      this.requestFlag.stop = false;
+      this.requestFlag.forcedStop = true;
+      this.requestFlag.reboot = false;
+      this.runningStat = 'FORCE_STOPPED'; // タイムアウト強制終了はCRASHEDとしては扱わない
+      this.mayMaintenance = false;
+      this.writeCurrentJSONProcStat();
+
+      emitLog(WARN, `The server "${this.srvId}" didn't stop within 3 minutes. \nForce-terminating!`);
+      //TODO: 強制終了コード(終了保証時間の経過であるため)
+      try {
+        const killed = proc.kill('SIGKILL');
+
+        if (!killed) throw new AggregateError([
+          new EvalError('Terminating Signals could not sending!'),
+          new Error('Shutdown Error Occured: This server is DEPLETED.')
+        ], 'Terminating Signals could not sending, this server is DEPLETED!');
+      } catch (err) {
+        this.requestFlag.forcedStop = false;
+        this.runningStat = 'DEPLETED';
+        this.mayMaintenance = true;
+        this.writeCurrentJSONProcStat();
+        emitLog(FATAL, `FAILED to force-terminate server "${this.srvId}": ${err}\nPlease use root permission console.`);
+      }
+    }, 180000);
+  }
 };
 
 export class MinecraftServer extends MinecraftServerBase {
-    constructor(serverJSON: MinecraftServerData) {
-        super(serverJSON);
-        this.rconCompatible = true;
-    }
-    override instantRCONCommand(cmd: string): void {
+  constructor(serverJSON: MinecraftServerData) {
+    super(serverJSON);
+    this.rconCompatible = true;
+  }
+  override instantRCONCommand(cmd: string): void {
+    if (this.rconClient.Inst === null) return;
+    this.rconClient.QueuedCmds.push(this.commandMessageFixing(cmd));
+    this.rconClient.Inst.connect();
+    if (cmd !== 'stop') {
+      setTimeout(() => {
         if (this.rconClient.Inst === null) return;
-        this.rconClient.QueuedCmds.push(this.commandMessageFixing(cmd));
-        this.rconClient.Inst.connect();
-        if (cmd !== 'stop') {
-            setTimeout(() => {
-                if (this.rconClient.Inst === null) return;
-                this.rconClient.Inst.disconnect();
-            }, 500)
-        }
+        this.rconClient.Inst.disconnect();
+      }, 500)
     }
+  }
 };
 
 export class VelocityServer extends MinecraftServerBase {
-    protected socketedServerStat: Map<string, { stat: boolean, reason: string }>;
-    constructor(serverJSON: MinecraftServerData) {
-        super(serverJSON);
-        const { proxySocketedSrv } = serverJSON.work;
-        this.stopCmd = 'end';
-        this.proxySocketSrv = proxySocketedSrv || [];
-        this.socketedServerStat = new Map();
+  protected socketedServerStat: Map<string, { stat: boolean, reason: string }>;
+  constructor(serverJSON: MinecraftServerData) {
+    super(serverJSON);
+    const { proxySocketedSrv } = serverJSON.work;
+    this.stopCmd = 'end';
+    this.proxySocketSrv = proxySocketedSrv || [];
+    this.socketedServerStat = new Map();
+  }
+  public override instantRCONCommand(cmd: string): void {
+    this.instantStdinCommand(cmd);
+  }
+  public override observeServer(): void {
+    this.runningResult.rObserve = true;
+    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+    const { ERROR, WARN, LOG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    if (this.serverProc === null || this.runningStat !== 'RUNNING') {
+      this.runningResult.rObserve = false;
+      return;
     }
-    public override instantRCONCommand(cmd: string): void {
-        this.instantStdinCommand(cmd);
+    if (!(typeof this.serverProc.exitCode === 'undefined' || this.serverProc.exitCode === null)) {
+      this.runningResult.rObserve = false;
+      return;
     }
-    public override observeServer(): void {
-        this.runningResult.rObserve = true;
-        const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
-        const { ERROR, WARN, LOG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-        if (this.serverProc === null || this.runningStat !== 'RUNNING') {
-            this.runningResult.rObserve = false;
-            return;
-        }
-        if (!(typeof this.serverProc.exitCode === 'undefined' || this.serverProc.exitCode === null)) {
-            this.runningResult.rObserve = false;
-            return;
-        }
-        if (DEBUG_MODE) emitLog(WARN, 'DEBUG MODE enabled. Skipping Result-Based Process Stopping.', { optStr: '[PROXY-SRV]' });
-        this.checkProxySocketedServerStatus();
-        this.socketedServerStat.forEach((value, key) => {
-            const { stat: isOnline, reason: stat } = value;
-            emitLog(LOG, `Socketed Server ${key} Status: ${stat}`, { optStr: '[PROXY-SRV]' });
-            if (this.runningResult.rObserve && !isOnline) this.runningResult.rObserve = false;
-        });
-        if (!this.runningResult.rObserve) {
-            emitLog(ERROR, 'Some of the socketed server is not Launched.', { optStr: '[PROXY-SRV]' });
-            if (!DEBUG_MODE) {
-                emitLog(ERROR, 'Stop phase started.', { optStr: '[PROXY-SRV]' });
-                this.stopServer();
-            }
-        }
+    if (DEBUG_MODE) emitLog(WARN, 'DEBUG MODE enabled. Skipping Result-Based Process Stopping.', { optStr: '[PROXY-SRV]' });
+    this.checkProxySocketedServerStatus();
+    this.socketedServerStat.forEach((value, key) => {
+      const { stat: isOnline, reason: stat } = value;
+      emitLog(LOG, `Socketed Server ${key} Status: ${stat}`, { optStr: '[PROXY-SRV]' });
+      if (this.runningResult.rObserve && !isOnline) this.runningResult.rObserve = false;
+    });
+    if (!this.runningResult.rObserve) {
+      emitLog(ERROR, 'Some of the socketed server is not Launched.', { optStr: '[PROXY-SRV]' });
+      if (!DEBUG_MODE) {
+        emitLog(ERROR, 'Stop phase started.', { optStr: '[PROXY-SRV]' });
+        this.stopServer();
+      }
     }
-    protected checkProxySocketedServerStatus(): void {
-        const { LOGGING_PREFIXES, SERVER_INSTANCES } = globalThis.MCSERV_CONTROLLER_ENV;
-        const { ERROR, WARN } = LOGGING_PREFIXES;
-        let tgtServerInstances: MinecraftServerBase[] = [];
-        this.proxySocketSrv?.forEach((tgtSrvId) => {
-            const { success, result } = searchServerInstance(tgtSrvId);
-            if (success) {
-                const tgtSrv = SERVER_INSTANCES.at(result.idx);
-                if (typeof tgtSrv === 'undefined') {
-                    emitLog(WARN, 'Socketed Server not matched.', { optStr: '[PROXY-SRV]' });
-                    return;
-                }
-                tgtServerInstances.push(tgtSrv);
-            }
-        });
-        if (tgtServerInstances.length === 0) {
-            emitLog(ERROR, 'Matched Socketed Server nothing.');
-            this.runningResult.rObserve = false;
-            return;
+  }
+  protected checkProxySocketedServerStatus(): void {
+    const { LOGGING_PREFIXES, SERVER_INSTANCES } = globalThis.MCSERV_CONTROLLER_ENV;
+    const { ERROR, WARN } = LOGGING_PREFIXES;
+    let tgtServerInstances: MinecraftServerBase[] = [];
+    this.proxySocketSrv?.forEach((tgtSrvId) => {
+      const { success, result } = searchServerInstance(tgtSrvId);
+      if (success) {
+        const tgtSrv = SERVER_INSTANCES.at(result.idx);
+        if (typeof tgtSrv === 'undefined') {
+          emitLog(WARN, 'Socketed Server not matched.', { optStr: '[PROXY-SRV]' });
+          return;
         }
-        tgtServerInstances.forEach((srvInst) => {
-            srvInst.observeServer();
-            const { srvId, runningResult } = srvInst;
-            const observe = runningResult.rObserve;
-            this.socketedServerStat.set(srvId, { stat: observe, reason: `Server is ${observe ? 'online' : 'offline'}` });
-        });
+        tgtServerInstances.push(tgtSrv);
+      }
+    });
+    if (tgtServerInstances.length === 0) {
+      emitLog(ERROR, 'Matched Socketed Server nothing.');
+      this.runningResult.rObserve = false;
+      return;
     }
+    tgtServerInstances.forEach((srvInst) => {
+      srvInst.observeServer();
+      const { srvId, runningResult } = srvInst;
+      const observe = runningResult.rObserve;
+      this.socketedServerStat.set(srvId, { stat: observe, reason: `Server is ${observe ? 'online' : 'offline'}` });
+    });
+  }
 }
 
 const hasContainServerInstanceCache = (keyword: string): boolean => {
-    let result = false;
-    const { SRVINST_CACHE } = globalThis.MCSERV_CONTROLLER_ENV;
-    SRVINST_CACHE.forEach((cache) => {
-        if (result) return;
-        if (cache === keyword) result = true;
-    });
-    return result;
+  let result = false;
+  const { SRVINST_CACHE } = globalThis.MCSERV_CONTROLLER_ENV;
+  SRVINST_CACHE.forEach((cache) => {
+    if (result) return;
+    if (cache === keyword) result = true;
+  });
+  return result;
 };
 
 const compareServerJSONInfo = (base: MinecraftServerData, comp: MinecraftServerData) => {
-    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
-    const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-    /*
-    変更可能:
-    - name
-    - work
-      - jvmArgs
-        - memory
-          - Xmx
-           -Xms
-        - extra
-      - jarFile
-      - jarArgs
-      - proxySocketedSrv
-    - process
-      - runningStatus
-      - maintenanceMode
-      - scheduleTime
-        - serverExecStart
-        - override
-          - dayReboot, weeklyShutdown
-            - doOverride
-            - motd
-            - exec
-     */
-    type checkJSON = Readonly<{
-        name: string,
-        work: {
-            jvmArgs: {
-                memory: {
-                    Xmx: JVMMemoryAllocProperty,
-                    Xms: JVMMemoryAllocProperty
-                },
-                extra: string
-            },
-            jarFile: string,
-            jarArgs: string,
-            proxySocketedSrv: string[] | null
+  const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+  const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+  /*
+  変更可能:
+  - name
+  - work
+    - jvmArgs
+      - memory
+        - Xmx
+         -Xms
+      - extra
+    - jarFile
+    - jarArgs
+    - proxySocketedSrv
+  - process
+    - runningStatus
+    - maintenanceMode
+    - scheduleTime
+      - serverExecStart
+      - override
+        - dayReboot, weeklyShutdown
+          - doOverride
+          - motd
+          - exec
+   */
+  type checkJSON = Readonly<{
+    name: string,
+    work: {
+      jvmArgs: {
+        memory: {
+          Xmx: JVMMemoryAllocProperty,
+          Xms: JVMMemoryAllocProperty
         },
-        process: {
-            runningStatus: string,
-            maintenanceMode: boolean,
-            scheduleTime: {
-                serverExecStart: string,
-                override: {
-                    dayReboot: {
-                        doOverride: boolean,
-                        motd: string,
-                        exec: string
-                    },
-                    weeklyShutdown: {
-                        doOverride: boolean,
-                        motd: string,
-                        exec: string
-                    }
-                }
-            }
+        extra: string
+      },
+      jarFile: string,
+      jarArgs: string,
+      proxySocketedSrv: string[] | null
+    },
+    process: {
+      runningStatus: string,
+      maintenanceMode: boolean,
+      scheduleTime: {
+        serverExecStart: string,
+        override: {
+          dayReboot: {
+            doOverride: boolean,
+            motd: string,
+            exec: string
+          },
+          weeklyShutdown: {
+            doOverride: boolean,
+            motd: string,
+            exec: string
+          }
         }
-    }>;
-    const bJSONTgt: checkJSON = {
-        name: base.name,
-        work: {
-            jvmArgs: base.work.jvmArgs,
-            jarFile: base.work.jarFile,
-            jarArgs: base.work.jarArgs,
-            proxySocketedSrv: base.work.proxySocketedSrv
-        },
-        process: base.process
-    };
-    const cJSONTgt: checkJSON = {
-        name: comp.name,
-        work: {
-            jvmArgs: comp.work.jvmArgs,
-            jarFile: comp.work.jarFile,
-            jarArgs: comp.work.jarArgs,
-            proxySocketedSrv: comp.work.proxySocketedSrv
-        },
-        process: comp.process
-    };
-    if (DEBUG_MODE) emitLog(DEBUG, `PrevStat: ${bJSONTgt.process.runningStatus} / CurrentStat: ${cJSONTgt.process.runningStatus}`);
-    const result = isEqual(bJSONTgt, cJSONTgt);
-    if (DEBUG_MODE) emitLog(DEBUG, `Checking server_data.json status [RESULT: ${result}]`);
-    return result;
+      }
+    }
+  }>;
+  const bJSONTgt: checkJSON = {
+    name: base.name,
+    work: {
+      jvmArgs: base.work.jvmArgs,
+      jarFile: base.work.jarFile,
+      jarArgs: base.work.jarArgs,
+      proxySocketedSrv: base.work.proxySocketedSrv
+    },
+    process: base.process
+  };
+  const cJSONTgt: checkJSON = {
+    name: comp.name,
+    work: {
+      jvmArgs: comp.work.jvmArgs,
+      jarFile: comp.work.jarFile,
+      jarArgs: comp.work.jarArgs,
+      proxySocketedSrv: comp.work.proxySocketedSrv
+    },
+    process: comp.process
+  };
+  if (DEBUG_MODE) emitLog(DEBUG, `PrevStat: ${bJSONTgt.process.runningStatus} / CurrentStat: ${cJSONTgt.process.runningStatus}`);
+  const result = isEqual(bJSONTgt, cJSONTgt);
+  if (DEBUG_MODE) emitLog(DEBUG, `Checking server_data.json status [RESULT: ${result}]`);
+  return result;
 };
 
 export const generateServerInstance = (): void => {
-    let detectNotMatch = false;
-    loadCacheFile();
-    const { SERVER_CONFIG_INFO, SRVINST_CACHE } = globalThis.MCSERV_CONTROLLER_ENV;
-    const { INFO } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-    SERVER_CONFIG_INFO.forEach((serverJSON) => {
-        const { id, work } = serverJSON;
-        if (!hasContainServerInstanceCache(id)) serverJSON.process.runningStatus = 'UNDEFINED';
-        else serverJSON.process.runningStatus = serverJSON.process.runningStatus === 'RUNNING' ? 'STOPPED' :
-            serverJSON.process.runningStatus;
-        const { jarFile } = work;
-        if (/velocity|bungeecord|waterfall|lightfall/i.test(jarFile)) {
-            emitLog(INFO, `The Server Instance "${serverJSON.id}" is Proxy Server.`);
-            globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES.push(new VelocityServer(serverJSON));
-        } else {
-            emitLog(INFO, `The Server Instance "${serverJSON.id}" is Runner Server (like Forge, Paper, Fabric).`);
-            globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES.push(new MinecraftServer(serverJSON));
-        }
-        SRVINST_CACHE.forEach((cache) => {
-            if (!detectNotMatch) detectNotMatch = serverJSON.id === cache;
-        });
-        if (!detectNotMatch) SRVINST_CACHE.push(serverJSON.id);
-        detectNotMatch = false;
+  let detectNotMatch = false;
+  loadCacheFile();
+  const { SERVER_CONFIG_INFO, SRVINST_CACHE } = globalThis.MCSERV_CONTROLLER_ENV;
+  const { INFO, FATAL } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+  SERVER_CONFIG_INFO.forEach((serverJSON) => {
+    const { id, work } = serverJSON;
+    if (!hasContainServerInstanceCache(id)) serverJSON.process.runningStatus = 'UNDEFINED';
+    else if (/(?:RUNN|START)ING/.test(serverJSON.process.runningStatus)) {
+      // 冷静に考えれば、RUNNING/STOPPING/STARTINGがこの状況下で動いているわけがないのでこうなる
+      serverJSON.process.runningStatus = 'STOPPED';
+    }
+    const { jarFile } = work;
+    if (/velocity|bungeecord|waterfall|lightfall/i.test(jarFile)) {
+      emitLog(INFO, `The Server Instance "${serverJSON.id}" is Proxy Server.`);
+      globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES.push(new VelocityServer(serverJSON));
+    } else {
+      emitLog(INFO, `The Server Instance "${serverJSON.id}" is Runner Server (like Forge, Paper, Fabric).`);
+      globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES.push(new MinecraftServer(serverJSON));
+    }
+    SRVINST_CACHE.forEach((cache) => {
+      if (!detectNotMatch) detectNotMatch = serverJSON.id === cache;
     });
-    writeCacheFile();
+    if (!detectNotMatch) SRVINST_CACHE.push(serverJSON.id);
+    detectNotMatch = false;
+  });
+  writeCacheFile();
 };
 
 export const searchServerInstance = (keyword: string, optIdx?: number): { success: boolean, result: searchResultInfo } => {
-    optIdx = optIdx || 0;
-    const failedResult = { success: false, result: { idx: -1, name: 'result not matching' } };
-    const allSearch = searchMatchedAllServerInstances(keyword);
-    if (!allSearch.success || allSearch.result.length === 0) return failedResult;
-    const getResult = allSearch.result.at(optIdx);
-    if (typeof getResult === 'undefined') return failedResult;
-    return { success: allSearch.success, result: getResult };
+  optIdx = optIdx || 0;
+  const failedResult = { success: false, result: { idx: -1, name: 'result not matching' } };
+  const allSearch = searchMatchedAllServerInstances(keyword);
+  if (!allSearch.success || allSearch.result.length === 0) return failedResult;
+  const getResult = allSearch.result.at(optIdx);
+  if (typeof getResult === 'undefined') return failedResult;
+  return { success: allSearch.success, result: getResult };
 };
 
 export const searchMatchedAllServerInstances = (keyword: string): { success: boolean, result: searchResultInfo[] } => {
-    let detected: searchResultInfo[] = [];
-    const regexSearch = new RegExp(keyword, 'i');
-    globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES.forEach((srvInst, idx) => {
-        const { srvId: id, srvName: name } = srvInst;
-        const tmpResultInfo: searchResultInfo = { idx: idx, name: name };
-        if (id === keyword) detected.push(tmpResultInfo);
-        else if (name === keyword) detected.push(tmpResultInfo);
-        else if (regexSearch.test(id)) detected.push(tmpResultInfo);
-        else if (regexSearch.test(name)) detected.push(tmpResultInfo);
-    });
-    return { success: detected.length > 0, result: detected };
+  let detected: searchResultInfo[] = [];
+  const regexSearch = new RegExp(keyword, 'i');
+  globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES.forEach((srvInst, idx) => {
+    const { srvId: id, srvName: name } = srvInst;
+    const tmpResultInfo: searchResultInfo = { idx: idx, name: name };
+    if (id === keyword) detected.push(tmpResultInfo);
+    else if (name === keyword) detected.push(tmpResultInfo);
+    else if (regexSearch.test(id)) detected.push(tmpResultInfo);
+    else if (regexSearch.test(name)) detected.push(tmpResultInfo);
+  });
+  return { success: detected.length > 0, result: detected };
 };
