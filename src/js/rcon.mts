@@ -40,13 +40,16 @@ export class Rcon extends EventEmitter {
         this.outstandingData = null;
         this.tcp = options.tcp;
         this.challenge = options.challenge;
+        this._tcpSocket = undefined;
+        this._udpSocket = undefined;
+        this._challengeToken = undefined;
         EventEmitter.call(this);
     };
-    send(data: string, cmd?: number, id?: number): void {
+    send(data: string, options: { cmd?: number, id?: number, callback?: () => void }): void {
         let sendBuf: Buffer<ArrayBuffer> | null = null;
         if (this.tcp) {
-            cmd = cmd || PacketType.COMMAND;
-            id = id || this.rconId;
+            const cmd = options.cmd || PacketType.COMMAND;
+            const id = options.id || this.rconId;
             const length = byteLength(data);
             sendBuf = alloc(length + 14);
             sendBuf.writeInt32LE(length + 10, 0);
@@ -67,21 +70,21 @@ export class Rcon extends EventEmitter {
             sendBuf.writeInt32LE(-1, 0);
             sendBuf.write(str, 4);
         }
-        this._sendSocket(sendBuf);
+        this._sendSocket(sendBuf, options.callback);
     }
     connect(): void {
         if (this.tcp) {
-            this._tcpSocket = createConnection(this.port, this.host);
+            this._tcpSocket = createConnection({ port: this.port, host: this.host });
             this._tcpSocket?.on('data', (data) => { this._tcpSocketOnData(typeof data === 'string' ? from(data, 'utf-8') : data); })
                 .on('connect', () => { this.socketOnConnect(); })
                 .on('error', (err) => { this.emit('error', err); })
-                .on('close', () => { this.socketOnEnd(); });
+                .on('close', () => { this.socketOnEnd(); this._tcpSocket = undefined; });
         } else {
-            this._udpSocket = createSocket('udp4');
+            this._udpSocket = createSocket({ type: 'udp4', reuseAddr: true });
             this._udpSocket.on('message', (data) => { this._udpSocketOnData(data); })
                 .on('listening', () => { this.socketOnConnect(); })
                 .on('error', (err) => { this.emit('error', err); })
-                .on('close', () => { this.socketOnEnd(); });
+                .on('close', () => { this.socketOnEnd(); this._udpSocket = undefined; });
             this._udpSocket.bind(0);
         }
     }
@@ -98,7 +101,7 @@ export class Rcon extends EventEmitter {
     }
     socketOnConnect(): void {
         this.emit('connect');
-        if (this.tcp) this.send(this.password, PacketType.AUTH);
+        if (this.tcp) this.send(this.password, { cmd: PacketType.AUTH });
         else if (this.challenge) {
             const str = 'challenge rcon\n';
             const sendBuf = alloc(str.length + 4);
@@ -118,8 +121,12 @@ export class Rcon extends EventEmitter {
         this.emit('end');
         this.hasAuthed = false;
     }
-    protected _sendSocket(buf: Buffer<ArrayBuffer>): void {
-        if (this._tcpSocket) this._tcpSocket.write(buf.toString('binary'), 'binary');
+    isOpen(): boolean {
+        if (this.tcp) return this._tcpSocket?.readyState === 'open';
+        else return typeof this._udpSocket !== 'undefined';
+    }
+    protected _sendSocket(buf: Buffer<ArrayBuffer>, callback?: () => void): void {
+        if (this._tcpSocket) this._tcpSocket.write(buf.toString('binary'), 'binary', callback);
         else if (this._udpSocket) this._udpSocket.send(buf, 0, buf.length, this.port, this.host);
     }
     protected _tcpSocketOnData(data: Buffer<ArrayBuffer>): void {

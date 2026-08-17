@@ -22,43 +22,131 @@ type searchResultInfo = {
 };
 
 const rconStartedRegExp = /RCON running on/;
-const proxyStartedRegExp = /Done \([0-9]+(\.[0-9]*)?s\)!/;
+const proxyStartedRegExp = /Done \([0-9]+(\.[0-9]*)?s\)\u0021/;
 
 export abstract class MinecraftServerBase {
+    /**
+     * [PROTECTED] Previous MinecraftServerData JSON
+     */
     protected prevJSONStat: MinecraftServerData;
+    /**
+     * [PROTECTED] A condition variable for restartServer()
+     * @default 0
+     */
+    protected _restartCond_: number;
+    /**
+     * [PUBLIC] Current MinecraftServerData JSON
+     */
     public currentJSONStat: MinecraftServerData;
+    /**
+     * [PUBLIC] Server ID
+     */
     public srvId: string;
+    /**
+     * [PUBLIC] Server Name
+     */
     public srvName: string;
+    /**
+     * [PUBLIC] Server Current Working Directory
+     */
     public srvCwd: string;
+    /**
+     * [PUBLIC] Java (JVM) Binary Path
+     */
     public javaBinPath: string;
+    /**
+     * [PUBLIC] Java (JVM) Binary Arguments (for child_process.spawn)
+     */
     public javaBinArgs: string[];
+    /**
+     * [PUBLIC] Proxy Socketed Server List
+     */
     public proxySocketSrv: string[] | null;
+    /**
+     * [PUBLIC] RCON Compatibles
+     */
     public rconCompatible: boolean;
+    /**
+     * [PUBLIC] RCON Port
+     */
     public rconPort: number;
+    /**
+     * [PUBLIC] RCON Password (raw)
+     */
     public rconPasswd: string;
+    /**
+     * [PUBLIC] RCON Client
+     */
     public rconClient: {
+        /**
+         * RCON Instance
+         * @default null
+         */
         Inst: Rcon | null,
+        /**
+         * RCON Authorized
+         * @default false
+         */
         Auth: boolean,
+        /**
+         * RCON Queued Commands
+         * @default []
+         */
         QueuedCmds: string[]
     };
+    /**
+     * [PUBLIC] Running Status
+     * @default 'UNDEFINED'
+     */
     public runningStat: RunningStatus;
+    /**
+     * [PUBLIC] Running Results for WebUI
+     */
     public runningResult: {
+        /**
+         * Result of startServer()
+         */
         rStart: boolean,
+        /**
+         * Result of stopServer()
+         */
         rStop: boolean,
+        /**
+         * Result of observerServer()
+         */
         rObserve: boolean
     };
+    /**
+     * [PUBLIC] Maintenance Mode Switch
+     */
     public mayMaintenance: boolean;
+    /**
+     * [PUBLIC] Server Scheduled Starting Up  
+     * ONLY CRON STRINGS
+     */
     public execStart: string;
+    /**
+     * [PUBLIC] Server Scheduled Rebooting
+     */
     public scheduleReboot: scheduleTimeInfo;
+    /**
+     * [PUBLIC] Server Scheduled Stopping
+     */
     public scheduleShutdown: scheduleTimeInfo;
+    /**
+     * [PUBLIC] Server Process (ChildProcess)
+     */
     public serverProc: ChildProcess | null;
-    public stopCmd: string;
+    /**
+     * [PUBLIC] Stop Command
+     */
+    public stopCmd: 'stop' | 'end';
 
     // public:
     public constructor(serverJSON: MinecraftServerData) {
         this.currentJSONStat = serverJSON;
         const { id, name, homeDir, work, process } = this.currentJSONStat;
-        const { jvmPath, jvmArgs, jarFile, jarArgs, rcon, proxySocketedSrv } = work;
+        const { jvmPath, jvmArgs, jarFile, jarArgs, rcon } = work;
         const { Xmx, Xms } = jvmArgs.memory;
         const { port, passwdMode, passwd } = rcon;
         const { runningStatus, maintenanceMode, scheduleTime } = process;
@@ -96,7 +184,11 @@ export abstract class MinecraftServerBase {
         this.scheduleShutdown = weeklyShutdown.doOverride ? tmpWS : glbWS;
         this.serverProc = null;
         this.stopCmd = 'stop';
+        this._restartCond_ = 0;
         this.writeCurrentJSONProcStat(true, true);
+    }
+    public get restartCond(): number {
+        return this._restartCond_;
     }
     public rebuildProcProperties(): void {
         const { runningStatus, maintenanceMode, scheduleTime } = this.currentJSONStat.process;
@@ -179,10 +271,8 @@ export abstract class MinecraftServerBase {
     }
     public restartServer(): void {
         if (this.serverProc === null || this.runningStat !== 'RUNNING') return;
+        this.restartCond = this.restartCond > 0 ? this.restartCond : 1; // デバッグ時にMinecraftServerBase.restartCondを多く設定していた場合の特殊裁定
         this.stopServer();
-        this.serverProc.on('exit', () => {
-            this.startServer();
-        });
     }
     public abstract instantRCONCommand(cmd: string): void;
     public instantStdinCommand(cmd: string): void {
@@ -191,7 +281,18 @@ export abstract class MinecraftServerBase {
         this.serverProc.stdin.write(`${this.commandMessageFixing(cmd)}\r`);
         this.serverProc.stdin.end();
     }
+    /**
+     * [PUBLIC][DEBUG-ONLY] MinecraftServerBase.restartCondを上書きします。
+     * @param value restartCondへ代入する数値(1以上)
+     * @deprecated デバッグ時にのみ使用。通常時は起動しないが、globalThis.DEBUG_MODEを上書きしている場合は発動する。リリース時は排除必須。
+     */
+    public overwriteRestardCond(value: number): void {
+        if (globalThis.DEBUG_MODE) this.restartCond = value > 0 ? value : 0;
+    }
     // protected:
+    protected set restartCond(value: number) {
+        this._restartCond_ = value > 0 ? value : 0;
+    }
     protected rebuildPrevServerJSON(): MinecraftServerData {
         const { id, name, homeDir, work, process } = this.currentJSONStat;
         const { jvmPath, jvmArgs, jarFile, jarArgs, rcon, proxySocketedSrv } = work;
@@ -269,7 +370,7 @@ export abstract class MinecraftServerBase {
         return `${globalThis.MCSERV_CONTROLLER_ENV.GLOBAL_CONFIG.global_data.mcsRootDir}/${homeDir}`;
     }
     protected autoGenerateServerName(): string {
-        const disassStr = this.srvId.trim().split(' ');
+        const disassStr = this.srvId.trim().split('_');
         let upperShiftedStr: string[] = [];
         disassStr.forEach((str) => {
             upperShiftedStr.push(`${str.charAt(0).toUpperCase()}${str.slice(1).toLowerCase()}`);
@@ -322,7 +423,7 @@ export abstract class MinecraftServerBase {
         else return 'UNDEFINED';
     }
     protected initServerProc(): void {
-        const { ERROR, LOG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+        const { ERROR, LOG, DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
         this.serverProc = spawn(this.javaBinPath, this.javaBinArgs, { cwd: this.srvCwd });
         this.serverProc.on('error', () => {
             emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
@@ -340,6 +441,14 @@ export abstract class MinecraftServerBase {
             this.runningResult.rStop = true;
             this.rconClient.Inst = null;
             this.writeCurrentJSONProcStat();
+            if (this._restartCond_ > 0) {
+                emitLog(LOG, `The Server Process "${this.srvId}" has restartCond enabled. It'll restart after a delay.`);
+                if (globalThis.DEBUG_MODE) emitLog(DEBUG, `Restart Remain(s): ${this.restartCond}`);
+                this._restartCond_--;
+                setTimeout(() => {
+                    this.startServer();
+                }, 2000);
+            }
         });
         this.serverProc.stdout?.on('data', (data) => {
             const dStr: string = typeof data === 'string' ? data
@@ -363,18 +472,18 @@ export abstract class MinecraftServerBase {
     protected initRconClient(): void {
         const { ERROR, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
         const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
+        this.rconClient.QueuedCmds = [];
         this.rconClient.Inst = new Rcon('localhost', this.rconPort, this.rconPasswd);
         this.rconClient.Inst.on('auth', () => {
             emitLog(LOG, 'RCon Client Authenticated', { optStr: rconLog });
             this.rconClient.Auth = true;
-            this.rconClient.QueuedCmds.forEach((cmd) => {
-                if (this.rconClient.Inst === null) return;
-                this.rconClient.Inst.send(cmd);
-                if (cmd === 'stop') {
-                    this.rconClient.Inst.disconnect();
-                    return;
-                }
-            });
+            for (const cmd of this.rconClient.QueuedCmds) {
+                if (this.rconClient.Inst === null) break;
+                this.rconClient.Inst.send(cmd, { callback: () => {
+                    if (this.rconClient.Inst !== null) this.rconClient.Inst.disconnect();
+                }});
+                if (cmd === 'stop') break;
+            }
         }).on('response', (str) => {
             emitLog(LOG, str, { optStr: rconLog });
         }).on('error', (err) => {
@@ -590,8 +699,8 @@ export const generateServerInstance = (): void => {
         if (!hasContainServerInstanceCache(id)) serverJSON.process.runningStatus = 'UNDEFINED';
         else serverJSON.process.runningStatus = serverJSON.process.runningStatus === 'RUNNING' ? 'STOPPED' :
             serverJSON.process.runningStatus;
-        const { jarArgs } = work;
-        if (/velocity|bungeecord|waterfall|lightfall/i.test(jarArgs)) {
+        const { jarFile } = work;
+        if (/velocity|bungeecord|waterfall|lightfall/i.test(jarFile)) {
             emitLog(INFO, `The Server Instance "${serverJSON.id}" is Proxy Server.`);
             globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES.push(new VelocityServer(serverJSON));
         } else {
@@ -602,6 +711,7 @@ export const generateServerInstance = (): void => {
             if (!detectNotMatch) detectNotMatch = serverJSON.id === cache;
         });
         if (!detectNotMatch) SRVINST_CACHE.push(serverJSON.id);
+        detectNotMatch = false;
     });
     writeCacheFile();
 };

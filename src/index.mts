@@ -169,9 +169,9 @@ const runMain = (): number => {
 
 if (main) {
     initGlobalThisVariables();
-    console.log(JSON.stringify(globalThis.MCSERV_CONTROLLER_ENV.CONFIG_VALIDATE_INFO));
     const values = (parseArgs({ args, options: launchOptions }).values as launchOption);
+    const LOptServer = values['launchServer'];
     globalThis.DEBUG_MODE = values['launch-debug'];
-    globalThis.DEBUG_SERVER_TARGET = values['launchServer'];
+    globalThis.DEBUG_SERVER_TARGET = typeof LOptServer === 'string' ? LOptServer : 'gregtech';
     process.exitCode = runMain();
 }

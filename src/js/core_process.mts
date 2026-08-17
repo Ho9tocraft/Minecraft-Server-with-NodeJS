@@ -1,4 +1,4 @@
-import { setTimeout } from 'timers';
+import { setTimeout, setInterval, clearInterval } from 'timers';
 import { join } from 'path';
 import { generateServerInstance, MinecraftServerBase, searchServerInstance } from './minecraft/servers.mjs';
 import { emitLog } from './general_utils/logger_utils.mjs';
@@ -9,7 +9,9 @@ const { dirname } = import.meta;
 const debugServerProcessing = (server: MinecraftServerBase): void => {
     const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
     const { DEBUG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-    server.overwriteCWDir('F:\\MinecraftServers\\Backup\\Forge1710_Main');
+    const { currentJSONStat } = server;
+    const { homeDir } = currentJSONStat;
+    server.overwriteCWDir(`F:\\MinecraftServers\\Backup\\${homeDir}`);
     if (DEBUG_MODE) {
         const { srvId, srvName, srvCwd, javaBinPath } = server;
         const runInfo = [
@@ -24,13 +26,19 @@ const debugServerProcessing = (server: MinecraftServerBase): void => {
     }
 
     server.startServer();
-    setTimeout(() => {
-        server.stopServer();
+    const intvalCmd = setInterval(() => {
+        if (server.restartCond > 0) {
+            server.restartServer();
+        }
+        else {
+            server.stopServer();
+            clearInterval(intvalCmd);
+        }
     }, 20000);
 };
 
 const debugCoreModuleInitProcess = (): void => {
-    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
+    const { DEBUG_MODE, DEBUG_SERVER_TARGET, MCSERV_CONTROLLER_ENV } = globalThis;
     if (!DEBUG_MODE) return;
     const { GLOBAL_CONFIG, SERVER_INSTANCES, LOGGING_PREFIXES } = MCSERV_CONTROLLER_ENV;
     const { DEBUG } = LOGGING_PREFIXES;
@@ -50,7 +58,8 @@ const debugCoreModuleInitProcess = (): void => {
         emitLog(DEBUG, instInfo.join('\n'));
         emitLog(DEBUG, '--- ServerInst Info End ---\n');
     });
-    let searchResult = searchServerInstance('gregtech');
+    if (DEBUG_SERVER_TARGET === 'null') return;
+    const searchResult = searchServerInstance(DEBUG_SERVER_TARGET);
     if (searchResult.success && typeof searchResult.result !== 'undefined') {
         const { idx } = searchResult.result;
         const getInst = SERVER_INSTANCES.at(idx);
