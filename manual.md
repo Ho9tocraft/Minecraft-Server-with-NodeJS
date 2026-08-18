@@ -1,7 +1,11 @@
-# Minecraft Server Controller (Powered by Node.js 24.14.0 LTS)
+# Minecraft Server Controller (Powered by Node.js 26.7.0 LTS)
 ## 概要
 ## セットアップガイド
 ### インストール
+1. nodeの最新版をインストールしてください。
+2. git cloneします。
+3. コマンドラインで「npm i」を実行してください。
+4. `mcsc_webui.env.default`を`mcsc_webui.env`にリネームします。
 ### サーバーインスタンス セットアップガイド
 事故防止のため、**必ず**手動で行って下さい。
 > [!CAUTION]
@@ -13,7 +17,7 @@
   - できるだけ機能の多いテキストエディタ (推奨: Visual Studio Code)
   - OpenSSL (可能な限り、最新版を使用すること)
   - 暗号化を行うWebサイト
-2. 手順
+1. 手順
   1. SSHなどで、サーバーフォルダを作成し、その中にサーバー本体をダウンロードして導入する。
   2. *eula.txt*作成と、*server.properties*作成のため、SSHを駆使して、modやplugin導入前に空起動する。また同時に、*eula.txt*は*true*にする。
   3. *server.properties*を編集し、*enable-rcon*を*true*に、*rcon.port*を調整し、*rcon.password*を記入する(※項目がない場合、自分で追加すること)。

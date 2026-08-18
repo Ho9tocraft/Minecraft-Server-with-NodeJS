@@ -9,3 +9,5 @@
 ./.ts-cache/*
 # Dist Javascript
 [Dd]ist/*
+# Environment File
+*.env

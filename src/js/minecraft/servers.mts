@@ -41,6 +41,7 @@ export type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'STARTING' | 'RUNNING' | '
 export type RConConnectionState = 'DISCONNECTED' | 'CONNECTING' | 'AUTHENTICATING' | 'CONNECTED' | 'FBMODE' | 'FAILED' | 'TIMEOUT';
 export type LogSource = 'stdout' | 'stderr' | 'rcon';
 export type ServerConsoleMessage = Readonly<{at: string, ts: number, source: LogSource, message: string, truncated: boolean}>;
+export type RConStatusSnapshot = Readonly<{status: RConConnectionState, authed: boolean, fallbacked: boolean, lastError: string | null}>;
 
 type searchResultInfo = {
   idx: number;
@@ -467,7 +468,6 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.writeCurrentJSONProcStat();
     }
   }
-
   protected publishConsoleMessage(source: LogSource, rawMsg: string): void {
     const { MaxHistoryRecord, MaxMessageChars } = ConsoleDefinition;
     const truncated = rawMsg.length > MaxMessageChars;
@@ -483,10 +483,17 @@ export abstract class MinecraftServerBase extends EventEmitter {
     this.consoleHistory.push(record);
     this.emit('console-output', record);
   }
-
   public getConsoleHistory(): readonly ServerConsoleMessage[] {
     return this.consoleHistory.slice();
   }
+  public getRConStatus(): RConStatusSnapshot {
+    return Object.freeze({
+      status: this.rconClient.CState,
+      authed: this.rconClient.Auth,
+      fallbacked: this.rconClient.FBMode,
+      lastError: this.rconClient.LastError,
+    });
+  };
 
   protected rebuildPrevServerJSON(): MinecraftServerData {
     const { id, name, homeDir, work, process } = this.currentJSONStat;
@@ -990,12 +997,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
 
   /* ---- WEB UI ---- */
   protected publishRConStatus(): void {
-    this.emit('rcon-status', Object.freeze({
-      status: this.rconClient.CState,
-      authed: this.rconClient.Auth,
-      fallbacked: this.rconClient.FBMode,
-      lastError: this.rconClient.LastError,
-    }));
+    this.emit('rcon-status', this.getRConStatus());
   }
 };
 

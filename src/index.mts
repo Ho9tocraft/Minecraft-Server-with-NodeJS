@@ -1,7 +1,7 @@
 import { parseArgs } from 'util';
 import { coreModuleInitProcess, initGlobalThisVariables } from './js/core_process.mjs';
 import { MinecraftServerBase } from './js/minecraft/servers.mjs';
-import { join } from 'path';
+import { ignitionMCSCWebUI } from './js/mcserv_controller/mcsc_bootstrap.mjs';
 const { main } = import.meta;
 
 declare global {
@@ -141,7 +141,8 @@ declare global {
 
 type launchOption = {
   'launch-debug': boolean,
-  'launchServer': string
+  'launchServer': string,
+  'webui': boolean,
 };
 const launchOptions: any = {
   'launch-debug': {
@@ -151,13 +152,19 @@ const launchOptions: any = {
   'launchServer': {
     type: 'string',
     short: 'S'
+  },
+  'webui': {
+    type: 'boolean',
+    short: 'w'
   }
 };
 const args = process.argv.slice(2);
 
-const runMain = (): number => {
+const runMain = async (enableWebUI: boolean): Promise<number> => {
   try {
     coreModuleInitProcess();
+
+    if (enableWebUI) await ignitionMCSCWebUI();
     return 0;
   }
   catch (err) {
@@ -173,5 +180,7 @@ if (main) {
   const LOptServer = values['launchServer'];
   globalThis.DEBUG_MODE = values['launch-debug'];
   globalThis.DEBUG_SERVER_TARGET = typeof LOptServer === 'string' ? LOptServer : 'gregtech';
-  process.exitCode = runMain();
+  void runMain(values.webui === true).then((exitCode) => {
+    process.exitCode = exitCode;
+  });
 }
