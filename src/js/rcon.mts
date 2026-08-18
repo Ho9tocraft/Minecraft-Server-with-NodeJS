@@ -12,6 +12,14 @@ const PacketType = {
   RESPONSE_VALUE: 0x00,
   RESPONSE_AUTH: 0x02
 };
+const PacketLength = {
+  Min: 10,
+  MaxPacket: 1024 * 1024,
+  MaxBuffer: 1024 * 1024 + 4,
+  MaxCommand: 16 * 1024,
+};
+
+export const MaxCommandPacketLength = PacketLength.MaxCommand;
 
 export class Rcon extends EventEmitter {
   host: string;
@@ -46,29 +54,46 @@ export class Rcon extends EventEmitter {
     EventEmitter.call(this);
   };
   send(data: string, options: { cmd?: number, id?: number, callback?: () => void }): void {
-    let sendBuf: Buffer<ArrayBuffer> | null = null;
+    const cmd = options.cmd ?? PacketType.COMMAND;
+    const id = options.id ?? this.rconId;
+    const dataLength = byteLength(data);
+    // RCON Protocol's MAXIMUM
+    if (dataLength > (PacketLength.MaxPacket - 10)) {
+      this._failRconConnection(`OVERPACKET ERROR: detect ${dataLength}, maximum ${PacketLength.MaxPacket}`);
+      return;
+    }
+
+    /**
+     * --------------------------------------------------------------------
+     * UI由来通常コマンドは、接続障害ではなく入力拒否 (RconCommandError)
+     * サーバー側において、stdin フォールバックモードの起動をトリガーしない
+     * --------------------------------------------------------------------
+     */
+    if (cmd === PacketType.COMMAND && dataLength > PacketLength.MaxCommand) {
+      this.emit('error', new RconCommandError(`RCON Command too big! Max: ${PacketLength.MaxCommand} bytes.`));
+      return;
+    }
+
+    let sendBuf: Buffer<ArrayBuffer>;
+
     if (this.tcp) {
-      const cmd = options.cmd || PacketType.COMMAND;
-      const id = options.id || this.rconId;
-      const length = byteLength(data);
-      sendBuf = alloc(length + 14);
-      sendBuf.writeInt32LE(length + 10, 0);
+      sendBuf = alloc(dataLength + 14);
+      sendBuf.writeInt32LE(dataLength + 10, 0);
       sendBuf.writeInt32LE(id, 4);
       sendBuf.writeInt32LE(cmd, 8);
       sendBuf.write(data, 12);
-      sendBuf.writeInt16LE(0, length + 12);
+      sendBuf.writeInt16LE(0, dataLength + 12);
     } else {
       if (this.challenge && !this._challengeToken) {
-        this.emit('error', new Error('Not Authenticated'));
+        this.emit('error', new RconError(`RCON isn't authenticated.`));
         return;
       }
-      let str: string = 'rcon ';
-      if (this._challengeToken) str += `${this._challengeToken} `;
-      if (this.password) str += `${this.password} `;
-      str += `${data}\n`;
-      sendBuf = alloc(4 + byteLength(str));
-      sendBuf.writeInt32LE(-1, 0);
-      sendBuf.write(str, 4);
+
+      const text = `rcon ${this._challengeToken ? `${this._challengeToken} ` : ''}${this.password ? `${this.password} ` : ''}${data}\n`;
+
+      sendBuf = alloc(4 + byteLength(text));
+      sendBuf.writeUInt32LE(-1, 0);
+      sendBuf.write(text, 4);
     }
     this._sendSocket(sendBuf, options.callback);
   }
@@ -120,62 +145,155 @@ export class Rcon extends EventEmitter {
     }
   }
   socketOnEnd(): void {
-    this.emit('end');
     this.hasAuthed = false;
+    this.outstandingData = null;
+    this._challengeToken = undefined;
+    this.emit('end');
   }
   isOpen(): boolean {
     if (this.tcp) return this._tcpSocket?.readyState === 'open';
     else return typeof this._udpSocket !== 'undefined';
   }
   protected _sendSocket(buf: Buffer<ArrayBuffer>, callback?: () => void): void {
-    if (this._tcpSocket) this._tcpSocket.write(buf.toString('binary'), 'binary', callback);
-    else if (this._udpSocket) this._udpSocket.send(buf, 0, buf.length, this.port, this.host);
+    try {
+      if (this.tcp) {
+        const socket = this._tcpSocket;
+
+        if (typeof socket === 'undefined' || socket.destroyed || socket.writableEnded) {
+          this._failRconConnection('RCON command cannot be sent: TCP Socket is closed.');
+          return;
+        }
+
+        socket.write(buf, callback);
+      } else {
+        if (typeof this._udpSocket === 'undefined') {
+          this._failRconConnection('RCON command cannot be sent: UDP Socket is closed.');
+          return;
+        }
+
+        this._udpSocket.send(buf, 0, buf.length, this.port, this.host, (error) => {
+          if (error) this._failRconConnection(error.message);
+          else if (callback) callback();
+        });
+      }
+    } catch (error) {
+      this._failRconConnection(error instanceof Error ? error.message : `${error}`);
+    }
+  }
+  protected _failRconConnection(message: string): void {
+    this.outstandingData = null;
+    if (this.tcp) this._tcpSocket?.destroy();
+    else this._udpSocket?.close();
+
+    this.emit('error', new RconError(message));
   }
   protected _tcpSocketOnData(data: Buffer<ArrayBuffer>): void {
+    // 解析前にデカすぎるやつを黙らせる処理
+    const incomingLength = data.length + (this.outstandingData?.length ?? 0);
+    const preParseMax = Math.ceil(PacketLength.MaxBuffer * 1.2);
+    if (incomingLength > preParseMax) {
+      this._failRconConnection(`Malformed RCON Packet: receive burset exceeds ${preParseMax} bytes.`);
+      return;
+    }
+
     if (this.outstandingData !== null) {
       data = concat([this.outstandingData, data], this.outstandingData.length + data.length);
       this.outstandingData = null;
     }
-    while (data.length >= 12) {
-      const len: number = data.readInt32LE(0);
-      if (!len) return;
-      const packetLen: number = len + 4;
-      const bodyLen: number = len - 10;
-      if (data.length < packetLen) break;
-      if (bodyLen < 0) {
-        data = data.subarray(packetLen);
+
+    while (data.length >= 4) {
+      const packetBodyLength = data.readInt32LE(0);
+
+      if (packetBodyLength < PacketLength.Min || packetBodyLength > PacketLength.MaxPacket) {
+        this._failRconConnection(`Malformed RCON Packet Length: ${packetBodyLength}`);
+        return;
       }
-      const id = data.readInt32LE(4);
-      const type = data.readInt32LE(8);
-      if (id === this.rconId) {
-        if (!this.hasAuthed && type === PacketType.RESPONSE_AUTH) {
-          this.hasAuthed = true;
-          this.emit('auth');
-        } else if (type === PacketType.RESPONSE_VALUE) {
-          let str = data.toString('utf-8', 12, 12 + bodyLen);
-          if (str.charAt(str.length - 1) === '\n') str = str.substring(0, str.length - 1);
-          this.emit('response', str);
+
+      const packetLength = packetBodyLength + 4;
+
+      if (data.length < packetLength) break;
+
+      if (data[packetLength - 2] !== 0 || data[packetLength - 1] !== 0) {
+        this._failRconConnection('MalFormed RCON Packet: Missing NUL TERMINATORS.');
+        return;
+      }
+
+      const inBodyLength = packetBodyLength - 10;
+      const _Id = data.readInt32LE(4);
+      const _Type = data.readInt32LE(8);
+
+      if (_Type !== PacketType.RESPONSE_VALUE && _Type !== PacketType.RESPONSE_AUTH) {
+        this._failRconConnection(`Malformed RCON Packet Type: ${_Type.toString(16)}`);
+        return;
+      }
+      const text = data.toString('utf-8', 12, 12 + inBodyLength);
+
+      if (!this.hasAuthed && _Type === PacketType.RESPONSE_AUTH) {
+        if (_Id === -1) {
+          this._failRconConnection('RCON Auth FAILED.');
+          return;
         }
-      } else if (id === -1) this.emit('error', new Error('Authentication Failed'));
-      else {
-        let str = data.toString('utf-8', 12, 12 + bodyLen);
-        if (str.charAt(str.length - 1) === '\n') str = str.substring(0, str.length - 1);
-        this.emit('server', str);
-      }
-      data = data.subarray(packetLen);
-    }
-    this.outstandingData = data;
-  }
-  protected _udpSocketOnData(data: Buffer<ArrayBuffer>): void {
-    const a = data.readUInt32LE(0);
-    if (a === 0xffffffff) {
-      const str = data.toString('utf-8', 4);
-      const tokens = str.split(' ');
-      if (tokens.length === 3 && tokens[0] === 'challenge' && tokens[1] === 'rcon' && typeof tokens[2] === 'string') {
-        this._challengeToken = substrEmu(tokens[2], 0, tokens[2].length - 1).trim();
+        if (_Id !== this.rconId) {
+          this._failRconConnection(`Unexpected RCON Auth Response ID: ${_Id}`);
+          return;
+        }
+
         this.hasAuthed = true;
         this.emit('auth');
-      } else this.emit('response', substrEmu(str, 1, str.length - 2));
-    } else this.emit('error', new Error('Received malformed packet'));
+      } else if (_Id === this.rconId && _Type === PacketType.RESPONSE_VALUE) this.emit('response', text);
+      else {
+        this.emit('server', text);
+      }
+
+      data = data.subarray(packetLength);
+    }
+    // 解析後
+    if (data.length > PacketLength.MaxBuffer) {
+      this._failRconConnection(`Malformed RCON Packet: incomplete buffered data exceeds ${PacketLength.MaxBuffer} bytes.`);
+      return;
+    }
+
+    this.outstandingData = data.length > 0 ? data : null;
+  }
+  protected _udpSocketOnData(data: Buffer<ArrayBuffer>): void {
+    if (data.length < 4 || data.length > PacketLength.MaxPacket) {
+      this._failRconConnection(`Malformed UDP RCON Packet Length: ${data.length}`);
+      return;
+    }
+
+    if (data.readUInt32LE(0) !== 0xffffffff) {
+    this._failRconConnection('Malformed UDP RCON Packet Header.');
+    return;
+  }
+
+  const str = data.toString('utf-8', 4);
+
+  if (this.challenge && !this.hasAuthed) {
+    const tokens = str.split(' ');
+
+    if (tokens.length === 3 && tokens[0] === 'challenge' && tokens[1] === 'rcon' && typeof tokens[2] === 'string') {
+      const token = substrEmu(tokens[2], 0, tokens[2].length - 1).trim();
+
+      if (token.length > 0) {
+        this._challengeToken = token;
+        this.hasAuthed = true;
+        this.emit('auth');
+        return;
+      }
+    }
+
+    this._failRconConnection('Malformed UDP RCON challenge response.');
+    return;
+  }
+
+  this.emit('response', substrEmu(str, 1, str.length - 2));
   }
 };
+
+export class RconError extends Error {
+  override name = 'RconError';
+}
+
+export class RconCommandError extends RconError {
+  override name = 'RconCommandError';
+}

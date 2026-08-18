@@ -1,3 +1,4 @@
+import { format } from 'date-fns';
 import { type as OSType } from 'os';
 import { ChildProcess, spawn } from 'child_process';
 import { TextDecoder } from 'util';
@@ -6,13 +7,14 @@ import { setTimeout } from 'timers';
 import { readFileSync, existsSync } from 'fs';
 import _ from 'lodash';
 import { checkHaveDangerUnicode, decryptEncryptedStr, decryptRconPasswd } from '../general_utils/decryption_utils.mjs';
-import { Rcon } from '../rcon.mjs';
+import { Rcon, RconCommandError, MaxCommandPacketLength } from '../rcon.mjs';
 import { emitLog } from '../general_utils/logger_utils.mjs';
 import { buildExecBinEnv } from '../general_utils/string_utils.mjs';
 import { saveServerDataJSON } from './data_io.mjs';
 import { loadCacheFile, writeCacheFile } from '../general_utils/json_utils.mjs';
 import { StringDecoder } from 'string_decoder';
 import { join } from 'path';
+import { EventEmitter } from 'events';
 const { from } = Buffer;
 const { isEqual } = _;
 const isWin = /windows/i.test(OSType().toString());
@@ -27,16 +29,33 @@ const isWin = /windows/i.test(OSType().toString());
  * DEPLETED: 高深刻度クラッシュ(強制停止できないなど)
  */
 export type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'STARTING' | 'RUNNING' | 'CRASHED' | 'FORCE_STOPPED' | 'DEPLETED';
-export type RConConnectionState = 'DISCONNECTED' | 'CONNECTING' | 'AUTHENTICATING' | 'CONNECTED' | 'FBMODE' | 'FAILED';
-type LogSource = 'stdout' | 'stderr';
+/**
+ * DISCONNECTED: ユーザーによる切断 or 初期 \
+ * CONNECTING: 接続処理実行中 \
+ * AUTHENTICATING: 接続認証中 \
+ * CONNECTED: 接続完了 \
+ * FBMODE: stdinフォールバックモード \
+ * FAILED: 接続失敗 \
+ * TIMEOUT: 接続タイムアウト(WebUIターミナルでよく使う)
+ */
+export type RConConnectionState = 'DISCONNECTED' | 'CONNECTING' | 'AUTHENTICATING' | 'CONNECTED' | 'FBMODE' | 'FAILED' | 'TIMEOUT';
+export type LogSource = 'stdout' | 'stderr' | 'rcon';
+export type ServerConsoleMessage = Readonly<{at: string, ts: number, source: LogSource, message: string, truncated: boolean}>;
+
 type searchResultInfo = {
   idx: number;
   name: string;
 };
 
 const startedRegExp = /Done \([0-9]+(\.[0-9]*)?s\)\u0021/;
+const RConConnectionTimeout = 10 * 1000;
+const RConIdleTimeout = 15 * 60 * 1000;
+const ConsoleDefinition = {
+  MaxHistoryRecord: 400,
+  MaxMessageChars: MaxCommandPacketLength,
+};
 
-export abstract class MinecraftServerBase {
+export abstract class MinecraftServerBase extends EventEmitter {
   /**
    * [PROTECTED] Previous MinecraftServerData JSON
    */
@@ -65,6 +84,9 @@ export abstract class MinecraftServerBase {
    * [PROTECTED] Server stop timer
    */
   protected stopTimer: NodeJS.Timeout | null = null;
+  protected rconConnTimer: NodeJS.Timeout | null = null;
+  protected rconIdleTimer: NodeJS.Timeout | null = null;
+  protected consoleHistory: ServerConsoleMessage[] = [];
   /**
    * [PUBLIC] Current MinecraftServerData JSON
    */
@@ -110,26 +132,39 @@ export abstract class MinecraftServerBase {
    */
   public rconClient: {
     /**
-     * RCON Instance
-     * @default null
-     */
-    Inst: Rcon | null,
-    /**
      * RCON Authorized
      * @default false
      */
     Auth: boolean,
     /**
-     * RCON Queued Commands
-     * @default []
+     * RCon Connection Status
+     * @default 'DISCONNECTED'
      */
-    QueuedCmds: string[],
+    CState: RConConnectionState,
     /**
      * stdin Fallback mode when RCon is unavailable
      */
     FBMode: boolean,
-    CState: RConConnectionState,
+    /**
+     * RCON Instance
+     * @default null
+     */
+    Inst: Rcon | null,
+    /**
+     * Last Error
+     * @default null
+     */
     LastError: string | null,
+    /**
+     * Manual Disconnect
+     * @default false
+     */
+    ManualDisconnect: boolean,
+    /**
+     * RCON Queued Commands
+     * @default []
+     */
+    QueuedCmds: string[],
   };
   /**
    * [PUBLIC] Running Status
@@ -181,6 +216,8 @@ export abstract class MinecraftServerBase {
 
   // public:
   public constructor(serverJSON: MinecraftServerData) {
+    super();
+
     this.currentJSONStat = serverJSON;
     const { id, name, homeDir, work, process } = this.currentJSONStat;
     const { jvmPath, jvmArgs, jarFile, jarArgs, rcon } = work;
@@ -205,12 +242,13 @@ export abstract class MinecraftServerBase {
     this.rconPort = port;
     this.rconPasswd = this.buildRconPasswd(passwdMode, passwd);
     this.rconClient = {
-      Inst: null,
       Auth: false,
-      QueuedCmds: [],
-      FBMode: false,
       CState: 'DISCONNECTED',
-      LastError: null
+      FBMode: false,
+      Inst: null,
+      LastError: null,
+      ManualDisconnect: false,
+      QueuedCmds: [],
     };
     this.runningStat = this.convertToRunningStatus(runningStatus);
     this.runningResult = {
@@ -345,6 +383,15 @@ export abstract class MinecraftServerBase {
       const cmd = this.commandMessageFixing(rawCmd);
       if (cmd.length === 0) continue;
 
+      if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(cmd)) {
+        emitLog(ERROR, `The command for "${this.srvId}" containes forbid characters`);
+        continue;
+      }
+      if (Buffer.byteLength(cmd, 'utf-8') > MaxCommandPacketLength) {
+        emitLog(ERROR, `The command for "${this.srvId}" exceeds ${MaxCommandPacketLength} bytes.`);
+        continue;
+      }
+
       if (/^(?:stop|end)$/i.test(cmd)) {
         this.stopServer();
         return;
@@ -356,9 +403,13 @@ export abstract class MinecraftServerBase {
   public disconnectRcon(): void {
     if (!this.rconCompatible || this.rconClient.FBMode) return;
 
+    this.rconClient.ManualDisconnect = true;
     this.rconClient.Auth = false;
     this.rconClient.CState = 'DISCONNECTED';
     this.rconClient.LastError = null;
+
+    this.publishRConStatus();
+    this.clearRconTimers();
     this.rconClient.Inst?.disconnect();
   }
 
@@ -395,6 +446,7 @@ export abstract class MinecraftServerBase {
     const LOGLEVEL: string = source === 'stderr' ? ERROR : LOG;
 
     emitLog(LOGLEVEL, line, { optStr: `[${this.srvId}][${source.toUpperCase()}]` });
+    this.publishConsoleMessage(source, line);
 
     if (source !== 'stdout' || this.runningStat !== 'STARTING') return;
 
@@ -414,6 +466,26 @@ export abstract class MinecraftServerBase {
       this.mayMaintenance = true;
       this.writeCurrentJSONProcStat();
     }
+  }
+
+  protected publishConsoleMessage(source: LogSource, rawMsg: string): void {
+    const { MaxHistoryRecord, MaxMessageChars } = ConsoleDefinition;
+    const truncated = rawMsg.length > MaxMessageChars;
+    const message = truncated ? `${rawMsg.slice(0, MaxMessageChars)}...` : rawMsg;
+    const ts = Date.now();
+    const record: ServerConsoleMessage = Object.freeze({
+      at: format(new Date(ts), 'yyyy/MM/dd HH:mm:ss.SSS'),
+      ts, source, message, truncated
+    });
+
+    if (this.consoleHistory.length >= MaxHistoryRecord) this.consoleHistory.shift();
+
+    this.consoleHistory.push(record);
+    this.emit('console-output', record);
+  }
+
+  public getConsoleHistory(): readonly ServerConsoleMessage[] {
+    return this.consoleHistory.slice();
   }
 
   protected rebuildPrevServerJSON(): MinecraftServerData {
@@ -570,8 +642,19 @@ export abstract class MinecraftServerBase {
       if (this.serverProc !== null) this.serverProc.stdin?.end();
 
       this.serverProc = null;
+      if (this.rconClient.Inst !== null) { // エラー回避。Inst=nullのときはやる意味が一切ない
+        this.clearRconTimers();
+        this.rconClient.Inst.disconnect();
+        this.rconClient.ManualDisconnect = true; // サーバー終了時処理は人為切断の判定になるのでtrue
+        this.rconClient.Auth = false;
+      }
       this.rconClient.Inst = null;
-      this.rconClient.Auth = false;
+      this.rconClient.FBMode = false;
+      this.rconClient.CState = 'DISCONNECTED';
+      this.rconClient.LastError = null;
+      this.rconClient.QueuedCmds = [];
+
+      this.publishRConStatus();
       this.requestFlag.stop = false;
 
       if (forcedStop) {
@@ -603,11 +686,16 @@ export abstract class MinecraftServerBase {
       this.writeCurrentJSONProcStat();
     });
   }
+
+  /* ---- RCON / COMMANDS ---- */
   protected initRconClient(): void {
     const { ERROR, WARN, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
 
+    this.clearRconTimers();
     this.rconClient.QueuedCmds = [];
+    this.rconClient.Auth = false;
+    this.rconClient.ManualDisconnect = false;
     this.rconClient.FBMode = !this.verifyRconConfig();
     this.rconClient.LastError = null;
 
@@ -615,34 +703,116 @@ export abstract class MinecraftServerBase {
       this.rconClient.CState = 'FBMODE';
       this.rconClient.LastError = 'INVALID RCON CONFIGURATION detected.';
       emitLog(WARN, 'RCON is not configured. Enable Fallback Mode.', { optStr: rconLog });
+      this.publishRConStatus();
       return;
     }
 
     this.rconClient.CState = 'DISCONNECTED';
+    this.publishRConStatus();
 
-    this.rconClient.Inst = new Rcon('localhost', this.rconPort, this.rconPasswd);
+    const client = new Rcon('localhost', this.rconPort, this.rconPasswd);
+    this.rconClient.Inst = client;
 
     this.rconClient.Inst.on('connect', () => {
+      if (this.rconClient.Inst !== client) return;
       this.rconClient.CState = 'AUTHENTICATING';
+      this.publishRConStatus();
     }).on('auth', () => {
-      emitLog(LOG, 'RCon Client Authenticated', { optStr: rconLog });
+      if (this.rconClient.Inst !== client) return;
+
+      this.clearRconConnTimer();
       this.rconClient.Auth = true;
       this.rconClient.CState = 'CONNECTED';
+      this.rconClient.LastError = null;
+
+      emitLog(LOG, 'RCon Client Authenticated', { optStr: rconLog });
+      this.publishRConStatus();
+      this.touchRconIdleTimer(client);
       this.flushCommandQueue();
-    }).on('response', (str) => {
-      emitLog(LOG, str, { optStr: rconLog });
+    }).on('response', (str: unknown) => {
+      if (this.rconClient.Inst !== client) return;
+      if (typeof str !== 'string') {
+        emitLog(WARN, `Ignored invalid RCON response payload type: ${typeof str}`, { optStr: rconLog });
+        return;
+      }
+
+      this.touchRconIdleTimer(client);
+      for (const line of str.split(/(?:\r|\n|\r\n)/)) {
+        if (line.length > 0) this.handleServerLog('rcon', line);
+      }
     }).on('error', (err) => {
+      if (this.rconClient.Inst !== client) return;
+
+      if (err instanceof RconCommandError) {
+        emitLog(ERROR, err.message, { optStr: rconLog });
+        return;
+      }
+
+      this.clearRconTimers();
+
+      if (this.rconClient.ManualDisconnect) {
+        this.rconClient.CState = 'DISCONNECTED';
+        return;
+      }
+
       this.rconClient.Auth = false;
       this.rconClient.CState = 'FAILED';
       this.rconClient.LastError = err instanceof Error ? err.message : `${err}`;
+
       emitLog(ERROR, err, { optStr: rconLog });
       this.enableStdinFBMode();
     }).on('end', () => {
-      this.rconClient.Auth = false;
-      if (!this.rconClient.FBMode) this.rconClient.CState = 'DISCONNECTED';
+      if (this.rconClient.Inst !== client) return;
 
-      emitLog(LOG, 'Connection Closed', { optStr: rconLog });
+      this.clearRconTimers();
+      this.rconClient.Auth = false;
+
+      if (this.rconClient.FBMode) return;
+
+      if (this.rconClient.ManualDisconnect) {
+        const idling = this.rconClient.CState === 'TIMEOUT';
+
+        this.rconClient.ManualDisconnect = false;
+
+        if (idling) emitLog(LOG, 'RCON connection closed by idling function.', { optStr: rconLog });
+        else {
+          this.rconClient.CState = 'DISCONNECTED';
+          emitLog(LOG, 'Connection Closed by admin user.', { optStr: rconLog });
+          this.publishRConStatus();
+        }
+        return;
+      }
+
+      if (this.rconClient.CState === 'CONNECTING' && this.rconClient.QueuedCmds.length > 0) {
+        setTimeout(() => {
+          if (this.rconClient.Inst !== client || this.rconClient.FBMode || this.rconClient.Auth) return;
+
+          this.armRconConnTimer(client);
+          client.connect();
+        }, 10); // 不具合対策のため、10msだけずらして実行。
+        return;
+      }
+
+      this.rconClient.CState = 'FAILED';
+      this.rconClient.LastError ??= 'RCON connection closed unexpectedly.';
+      emitLog(WARN, 'RCON connection closed unexpectedly', { optStr: rconLog });
+      this.publishRConStatus();
+      this.enableStdinFBMode();
     });
+  }
+  protected flushCommandQueue(): void {
+    const client = this.rconClient.Inst;
+    if (this.rconCompatible && !this.rconClient.FBMode) {
+      if (client === null || !this.rconClient.Auth) return;
+
+      const cmds = this.rconClient.QueuedCmds.splice(0);
+      cmds.forEach((cmd) => client.send(cmd, {}));
+      this.touchRconIdleTimer(client);
+      return;
+    }
+
+    const cmds = this.rconClient.QueuedCmds.splice(0);
+    cmds.forEach((cmd) => this.instantStdinCommand(cmd));
   }
   protected verifyRconConfig(): boolean {
     const confValidPort = Number.isInteger(this.rconPort) && this.rconPort > 0 && this.rconPort <= 65535;
@@ -693,6 +863,8 @@ export abstract class MinecraftServerBase {
     this.rconClient.FBMode = true;
     this.rconClient.Auth = false;
     this.rconClient.CState = 'FBMODE';
+    this.rconClient.ManualDisconnect = false;
+    this.clearRconTimers();
 
     if (this.rconClient.LastError === null) this.rconClient.LastError = 'RCON connection failed.';
 
@@ -700,12 +872,104 @@ export abstract class MinecraftServerBase {
     this.rconClient.Inst = null;
 
     emitLog(WARN, 'RCon Connection Failed. FBMode (Fallback Mode) active.', { optStr: rconLog });
+    this.publishRConStatus();
 
     this.flushCommandQueue();
   }
   protected commandMessageFixing(cmd: string): string {
     return cmd.trim().replaceAll(/(\r|\n|\t)/g, '');
   }
+  protected abstract instantRCONCommand(cmd: string): void;
+  protected instantStdinCommand(cmd: string): void {
+    if (this.serverProc === null || this.runningStat !== 'RUNNING') return;
+    if (this.serverProc.stdin === null) return;
+    this.serverProc.stdin.write(`${this.commandMessageFixing(cmd)}\r`);
+  }
+
+  /* ---- TIMERS ---- */
+  protected clearStopTimer(): void {
+    if (this.stopTimer !== null) {
+      clearTimeout(this.stopTimer);
+    }
+    this.stopTimer = null;
+  }
+  protected runStopTimer(proc: ChildProcess): void {
+    const { FATAL, WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+
+    this.clearStopTimer();
+    this.stopTimer = setTimeout(() => {
+      if (this.serverProc !== proc || proc.exitCode !== null || !this.requestFlag.stop) return;
+
+      this.requestFlag.stop = false;
+      this.requestFlag.forcedStop = true;
+      this.requestFlag.reboot = false;
+      this.runningStat = 'FORCE_STOPPED'; // タイムアウト強制終了はCRASHEDとしては扱わない
+      this.mayMaintenance = false;
+      this.writeCurrentJSONProcStat();
+
+      emitLog(WARN, `The server "${this.srvId}" didn't stop within 3 minutes. \nForce-terminating!`);
+      try {
+        const killed = proc.kill('SIGKILL');
+
+        if (!killed) throw new AggregateError([
+          new EvalError('Terminating Signals could not sending!'),
+          new Error('Shutdown Error Occured: This server is DEPLETED.')
+        ], 'Terminating Signals could not sending, this server is DEPLETED!');
+      } catch (err) {
+        this.requestFlag.forcedStop = false;
+        this.runningStat = 'DEPLETED';
+        this.mayMaintenance = true;
+        this.writeCurrentJSONProcStat();
+        emitLog(FATAL, `FAILED to force-terminate server "${this.srvId}": ${err}\nPlease use root permission console.`);
+      }
+    }, 180000);
+  }
+  protected clearRconConnTimer(): void {
+    if (this.rconConnTimer !== null) clearTimeout(this.rconConnTimer);
+    this.rconConnTimer = null;
+  }
+  protected clearRconIdleTimer(): void {
+    if (this.rconIdleTimer !== null) clearTimeout(this.rconIdleTimer);
+    this.rconIdleTimer = null;
+  }
+  protected clearRconTimers(): void {
+    this.clearRconConnTimer();
+    this.clearRconIdleTimer();
+  }
+  protected armRconConnTimer(client: Rcon): void {
+    this.clearRconConnTimer();
+    this.rconConnTimer = setTimeout(() => {
+      if (this.rconClient.Inst !== client || this.rconClient.Auth || this.rconClient.FBMode) return;
+
+      this.rconClient.CState = 'FAILED';
+      this.rconClient.LastError = `RCON connect/auth proc timeout: over ${RConConnectionTimeout}ms`;
+
+      this.enableStdinFBMode();
+    }, RConConnectionTimeout);
+  }
+  protected touchRconIdleTimer(client: Rcon): void {
+    if (!this.rconClient.Auth || this.rconClient.FBMode) return;
+
+    const { WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
+
+    this.clearRconIdleTimer();
+
+    this.rconIdleTimer = setTimeout(() => {
+      if (this.rconClient.Inst !== client) return;
+
+      this.rconClient.ManualDisconnect = true;
+      this.rconClient.Auth = false;
+      this.rconClient.CState = 'TIMEOUT';
+      this.rconClient.LastError = 'RCON Client Idling Timeout (This is not a bug)';
+      emitLog(WARN, `For Safety Reasons, Please disconnect...if you're going to leave it unatended. Sorry!`, { optStr: rconLog });
+      this.clearRconTimers();
+      this.rconClient.Inst?.disconnect();
+      this.publishRConStatus();
+    }, RConIdleTimeout);
+  }
+
+  /* ---- CRASH HANDLE ---- */
   protected detectCrash(message?: string): boolean {
     const { WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     const crashMessage = /This crash report has been saved to/i;
@@ -723,64 +987,15 @@ export abstract class MinecraftServerBase {
     const file = readFileSync(LATEST_LOG, { encoding: 'utf-8' }).toString();
     return crashMessage.test(file)
   }
-  protected abstract instantRCONCommand(cmd: string): void;
-  protected instantStdinCommand(cmd: string): void {
-    if (this.serverProc === null || this.runningStat !== 'RUNNING') return;
-    if (this.serverProc.stdin === null) return;
-    this.serverProc.stdin.write(`${this.commandMessageFixing(cmd)}\r`);
-  }
 
-  protected clearStopTimer(): void {
-    if (this.stopTimer !== null) {
-      clearTimeout(this.stopTimer);
-    }
-    this.stopTimer = null;
-  }
-  protected flushCommandQueue(): void {
-    const client = this.rconClient.Inst;
-    if (this.rconCompatible && !this.rconClient.FBMode) {
-      if (client === null || !this.rconClient.Auth) return;
-
-      const cmds = this.rconClient.QueuedCmds.splice(0);
-      cmds.forEach((cmd) => client.send(cmd, {}));
-      return;
-    }
-
-    const cmds = this.rconClient.QueuedCmds.splice(0);
-    cmds.forEach((cmd) => this.instantStdinCommand(cmd));
-  }
-
-  protected runStopTimer(proc: ChildProcess): void {
-    const { FATAL, WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-
-    this.clearStopTimer();
-    this.stopTimer = setTimeout(() => {
-      if (this.serverProc !== proc || proc.exitCode !== null || !this.requestFlag.stop) return;
-
-      this.requestFlag.stop = false;
-      this.requestFlag.forcedStop = true;
-      this.requestFlag.reboot = false;
-      this.runningStat = 'FORCE_STOPPED'; // タイムアウト強制終了はCRASHEDとしては扱わない
-      this.mayMaintenance = false;
-      this.writeCurrentJSONProcStat();
-
-      emitLog(WARN, `The server "${this.srvId}" didn't stop within 3 minutes. \nForce-terminating!`);
-      //TODO: 強制終了コード(終了保証時間の経過であるため)
-      try {
-        const killed = proc.kill('SIGKILL');
-
-        if (!killed) throw new AggregateError([
-          new EvalError('Terminating Signals could not sending!'),
-          new Error('Shutdown Error Occured: This server is DEPLETED.')
-        ], 'Terminating Signals could not sending, this server is DEPLETED!');
-      } catch (err) {
-        this.requestFlag.forcedStop = false;
-        this.runningStat = 'DEPLETED';
-        this.mayMaintenance = true;
-        this.writeCurrentJSONProcStat();
-        emitLog(FATAL, `FAILED to force-terminate server "${this.srvId}": ${err}\nPlease use root permission console.`);
-      }
-    }, 180000);
+  /* ---- WEB UI ---- */
+  protected publishRConStatus(): void {
+    this.emit('rcon-status', Object.freeze({
+      status: this.rconClient.CState,
+      authed: this.rconClient.Auth,
+      fallbacked: this.rconClient.FBMode,
+      lastError: this.rconClient.LastError,
+    }));
   }
 };
 
@@ -799,11 +1014,17 @@ export class MinecraftServer extends MinecraftServerBase {
       return;
     }
 
-    if (!client.isOpen() && this.rconClient.CState !== 'CONNECTING') {
-      this.rconClient.CState = 'CONNECTING';
+    if (!client.isOpen()) {
+      if (this.rconClient.CState !== 'CONNECTING') {
+        this.rconClient.CState = 'CONNECTING';
+        this.rconClient.ManualDisconnect = false;
+        this.publishRConStatus();
+        this.armRconConnTimer(client);
+      }
+
+      client.connect();
     }
 
-    client.connect();
     this.flushCommandQueue();
   }
 };
