@@ -442,6 +442,7 @@ const clearAuthenticatedView = () => {
     activeWebSocket = null;
   }
 
+  authenticatedUser.textContent = '';
   serverCards.clear();
   serverList.replaceChildren();
   serverPanel.hidden = true;

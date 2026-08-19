@@ -1,82 +1,464 @@
 :root {
   color-scheme: dark;
-  font-family: 'Rounded-L Mgen+ 2c regular', 'BIZ UDGothic', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  font-family:
+    'BIZ UDGothic',
+    'Yu Gothic UI',
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  background: #1d2327;
+  color: #f0f0f1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: #1d2327;
 }
 
 body {
-  max-width: 48rem;
-  margin: 0 auto;
-  padding: 1.5rem;
+  min-width: 20rem;
+  min-height: 100vh;
+  margin: 0;
+  background: #f0f0f1;
+  color: #1d2327;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 2.25rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #2271b1;
+  border-radius: 0.2rem;
+  background: #2271b1;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: #135e96;
+  background: #135e96;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid #72aee6;
+  outline-offset: 2px;
+}
+
+button:disabled {
+  border-color: #a7aaad;
+  background: #a7aaad;
+  color: #f6f7f7;
+  cursor: not-allowed;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #8c8f94;
+  border-radius: 0.2rem;
+  background: #fff;
+  color: #2c3338;
+}
+
+textarea {
+  min-height: 5.5rem;
+  resize: vertical;
 }
 
 label {
   display: grid;
-  gap: 0.35rem;
-  margin-block: 1rem;
-}
-
-input,button {
-  font: inherit;
-  padding: 0.5rem;
-}
-
-#notice {
-  min-height: 1.5em;
+  gap: 0.4rem;
+  font-weight: 600;
 }
 
 [hidden] {
+  display: none !important;
+}
+
+.admin-bar {
+  position: sticky;
+  z-index: 10;
+  top: 0;
+  display: flex;
+  min-height: 2.9rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-inline: 1rem;
+  background: #1d2327;
+  color: #f0f0f1;
+}
+
+.admin-bar__brand {
+  color: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.admin-bar__brand:hover {
+  color: #72aee6;
+}
+
+.admin-bar__session {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.85rem;
+}
+
+#authed-user:empty {
   display: none;
 }
 
-#server-list {
+#logout-submit {
+  display: none;
+  min-height: 1.9rem;
+  padding: 0.2rem 0.6rem;
+  border-color: #50575e;
+  background: #3c434a;
+  font-size: 0.8rem;
+}
+
+#authed-user:not(:empty) + #logout-submit {
+  display: inline-flex;
+  align-items: center;
+}
+
+#logout-submit:hover:not(:disabled) {
+  border-color: #8c8f94;
+  background: #50575e;
+}
+
+.admin-layout {
+  display: grid;
+  min-height: calc(100vh - 2.9rem);
+  grid-template-columns: 10.5rem minmax(0, 1fr);
+}
+
+.admin-sidebar {
+  background: #1d2327;
+  color: #f0f0f1;
+}
+
+.admin-sidebar nav {
+  position: sticky;
+  top: 2.9rem;
+  padding-block: 0.8rem;
+}
+
+.admin-menu__item {
+  display: block;
+  padding: 0.75rem 1rem;
+  border-left: 0.25rem solid transparent;
+  color: #f0f0f1;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.admin-menu__item:hover,
+.admin-menu__item:focus-visible {
+  background: #2c3338;
+  color: #72aee6;
+}
+
+.admin-menu__item--active {
+  border-left-color: #72aee6;
+  background: #2271b1;
+  color: #fff;
+}
+
+.admin-menu__item--active:hover {
+  background: #135e96;
+  color: #fff;
+}
+
+.admin-content {
+  width: min(100%, 96rem);
+  margin-inline: auto;
+  padding: 2rem;
+}
+
+.page-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.page-heading h1,
+.login-panel h1 {
+  margin: 0;
+  color: #1d2327;
+  font-size: 1.8rem;
+  line-height: 1.25;
+}
+
+.page-heading p {
+  margin: 0.5rem 0 0;
+  color: #50575e;
+}
+
+.websocket-indicator {
+  flex: 0 0 auto;
+  margin: 0 !important;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #c3c4c7;
+  border-radius: 0.25rem;
+  background: #fff;
+  color: #1d2327 !important;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+#ws-status {
+  font-weight: 700;
+}
+
+.panel-message,
+.login-panel {
+  max-width: 32rem;
+  padding: 1.5rem;
+  border: 1px solid #c3c4c7;
+  border-radius: 0.25rem;
+  background: #fff;
+  box-shadow: 0 1px 1px rgb(0 0 0 / 4%);
+}
+
+.panel-message p {
+  margin: 0;
+}
+
+.login-panel {
+  margin: 8vh auto;
+}
+
+.login-panel > p {
+  margin: 0.75rem 0 1.5rem;
+  color: #50575e;
+}
+
+#login-form {
   display: grid;
   gap: 1rem;
 }
 
+#login-submit {
+  justify-self: start;
+  min-width: 7rem;
+}
+
+.servers-panel > h2 {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+
+#server-list {
+  display: grid;
+  gap: 1.25rem;
+}
+
 .server-card {
-  border: 1px solid currentColor;
-  border-radius: 0.5rem;
-  padding: 1rem;
+  overflow: hidden;
+  border: 1px solid #c3c4c7;
+  border-left: 0.3rem solid #8c8f94;
+  border-radius: 0.25rem;
+  background: #fff;
+  box-shadow: 0 1px 1px rgb(0 0 0 / 4%);
+}
+
+.server-card > * {
+  margin-right: 1.25rem;
+  margin-left: 1.25rem;
+}
+
+.server-card h3 {
+  margin-top: 1.25rem;
+  margin-bottom: 0.35rem;
+  color: #1d2327;
+  font-size: 1.25rem;
+}
+
+.server-card h4 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.7rem;
+  padding-top: 1rem;
+  border-top: 1px solid #dcdcde;
+  color: #1d2327;
+  font-size: 1rem;
+}
+
+.server-card p {
+  margin-top: 0.4rem;
+  margin-bottom: 0.4rem;
 }
 
 .server-card[data-running-status="RUNNING"] {
-  border-color: #66dd88;
+  border-left-color: #00a32a;
+}
+
+.server-card[data-running-status="STARTING"] {
+  border-left-color: #dba617;
 }
 
 .server-card[data-running-status="CRASHED"],
 .server-card[data-running-status="DEPLETED"] {
-  border-color: #ff6677;
+  border-left-color: #d63638;
 }
 
-.server-card h3 {
-  margin-top: 0;
+.server-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
-.server-card p {
-  margin-block: 0.4rem;
+.server-controls button:nth-child(2) {
+  border-color: #b32d2e;
+  background: #b32d2e;
+}
+
+.server-controls button:nth-child(2):hover:not(:disabled) {
+  border-color: #8a2424;
+  background: #8a2424;
 }
 
 .server-console {
-  max-height: 20rem;
+  max-height: 24rem;
+  margin-bottom: 0;
+  padding: 0.85rem;
   overflow: auto;
-  padding: 0.75rem;
-  background: #111;
-  border: 1px solid #444;
+  border: 1px solid #3c434a;
+  border-radius: 0.2rem;
+  background: #1d2327;
+  color: #dcdcde;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.server-card textarea {
-  box-sizing: border-box;
-  width: 100%;
-  resize: vertical;
-}
-
 .server-card form {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.65rem;
+  padding-bottom: 1rem;
 }
 
-.server-card form p {
-  min-height: 1.5em;
+.server-card form p,
+.server-card > p:last-child {
+  min-height: 1.4rem;
+  color: #50575e;
+  font-size: 0.85rem;
+}
+
+.server-card > button {
+  margin-top: 0.4rem;
+  border-color: #b32d2e;
+  background: #b32d2e;
+}
+
+.server-card > button:hover:not(:disabled) {
+  border-color: #8a2424;
+  background: #8a2424;
+}
+
+.notice {
+  min-height: 1.5rem;
+  margin: 1.25rem 0 0;
+  color: #50575e;
+}
+
+.admin-footer {
+  padding: 1rem 2rem;
+  border-top: 1px solid #c3c4c7;
+  background: #fff;
+  color: #50575e;
+  font-size: 0.8rem;
+}
+
+.admin-footer address {
+  font-style: normal;
+}
+
+@media (max-width: 36rem) {
+  .admin-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-sidebar nav {
+    position: static;
+    display: flex;
+    padding: 0;
+    overflow-x: auto;
+  }
+
+  .admin-menu__item {
+    flex: 0 0 auto;
+    border-bottom: 0.25rem solid transparent;
+    border-left: 0;
+  }
+
+  .admin-menu__item--active {
+    border-bottom-color: #72aee6;
+  }
+
+  .admin-content {
+    padding: 1.25rem;
+  }
+
+  .page-heading {
+    display: grid;
+  }
+}
+
+@media (max-width: 30rem) {
+  .admin-bar {
+    padding-inline: 0.75rem;
+  }
+
+  .admin-bar__brand {
+    font-size: 0.8rem;
+  }
+
+  .admin-content {
+    padding: 1rem 0.75rem;
+  }
+
+  .page-heading h1,
+  .login-panel h1 {
+    font-size: 1.45rem;
+  }
+
+  .server-card > * {
+    margin-right: 0.9rem;
+    margin-left: 0.9rem;
+  }
+
+  .server-controls button {
+    flex: 1 1 calc(50% - 0.5rem);
+  }
+
+  .server-console {
+    max-height: 18rem;
+  }
+
+  .admin-footer {
+    padding-inline: 0.75rem;
+  }
 }
