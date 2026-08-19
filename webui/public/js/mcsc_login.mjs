@@ -15,6 +15,36 @@ const webSocketStatus = document.querySelector('#ws-status');
 const serverList = document.querySelector('#server-list');
 const serverPanel = document.querySelector('#server-panel');
 const logoutSubmit = document.querySelector('#logout-submit');
+const navigationItems = document.querySelectorAll('[data-scroll-target]');
+
+const setActiveNavigation = (activeItem) => {
+  navigationItems.forEach((navigationItem) => {
+    navigationItem.classList.toggle(
+      'admin-menu__item--active',
+      navigationItem === activeItem,
+    );
+  });
+};
+
+navigationItems.forEach((navigationItem) => {
+  navigationItem.addEventListener('click', () => {
+    const targetId = navigationItem.dataset.scrollTarget;
+
+    if (typeof targetId !== 'string' || targetId.length === 0) return;
+
+    const target = document.querySelector(`#${targetId}`);
+
+    if (target === null) return;
+
+    setActiveNavigation(navigationItem);
+
+    target.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  });
+});
+
 const WebSocketReconnectDelayMs = 3 * 1000; // 3 sec
 let shouldMaintainWebSocket = false;
 let reconnectTimer = null;
@@ -86,11 +116,15 @@ const submitCommandBatch = (serverId, commandInput, commandNotice) => {
 };
 
 const createStatusRow = (labelText) => {
-  const row = document.createElement('p');
-  const label = document.createElement('strong');
-  const value = document.createElement('span');
+  const row = document.createElement('div');
+  const label = document.createElement('span');
+  const value = document.createElement('strong');
 
-  label.textContent = `${labelText}: `;
+  row.className = 'server-status-row';
+  label.className = 'server-status-row__label';
+  value.className = 'server-status-row__value';
+
+  label.textContent = labelText;
   value.textContent = '取得中';
 
   row.append(label, value);
@@ -155,6 +189,8 @@ const renderServerList = (servers) => {
     }
 
     const card = document.createElement('article');
+    const cardHeader = document.createElement('header');
+    const statusGrid = document.createElement('div');
     const title = document.createElement('h3');
     const serverId = document.createElement('p');
     const rconCompatible = document.createElement('p');
@@ -236,7 +272,7 @@ const renderServerList = (servers) => {
     commandInput.placeholder = '例:\nsay Hello\nlist';
 
     commandSubmit.type = 'submit';
-    commandSubmit.textContent = '送信';
+    commandSubmit.textContent = '送信 (Ctrl+Enter)';
     commandSubmit.disabled = true;
 
     commandForm.append(commandLabel, commandInput, commandSubmit, commandNotice);
@@ -265,6 +301,16 @@ const renderServerList = (servers) => {
     consoleView.textContent = 'ログを取得中';
 
     card.className = 'server-card';
+    cardHeader.className = 'server-card__header';
+    statusGrid.className = 'server-status-grid';
+
+    serverId.className = 'server-card__id';
+    rconCompatible.className = 'server-card__rcon-compatible';
+    rconError.className = 'server-card__error';
+    controlNotice.className = 'server-card__notice';
+    commandNotice.className = 'server-card__notice';
+    disconnectRConNotice.className = 'server-card__notice';
+
     title.textContent = server.name;
     serverId.textContent = `ID: ${server.id}`;
     rconCompatible.textContent = server.rconCompat
@@ -279,16 +325,20 @@ const renderServerList = (servers) => {
 
     rconError.hidden = true;
 
-    card.append(
-      title,
-      serverId,
-      rconCompatible,
+    cardHeader.append(title, serverId, rconCompatible);
+
+    statusGrid.append(
       serverStatus.row,
       processAlive.row,
       maintenance.row,
       rconStatus.row,
       rconAuth.row,
       rconFallback.row,
+    );
+
+    card.append(
+      cardHeader,
+      statusGrid,
       rconError,
       controlTitle,
       controlButtons,
@@ -348,6 +398,9 @@ const updateServerStatus = (serverId, status) => {
   cardInfo.serverStatus.textContent = status.status;
   cardInfo.maintenance.textContent = status.maintenance ? '有効' : '無効';
   cardInfo.processAlive.textContent = status.processAlive ? '稼働中' : '停止中';
+  cardInfo.serverStatus.dataset.state = status.status;
+  cardInfo.maintenance.dataset.state = status.maintenance ? 'enabled' : 'disabled';
+  cardInfo.processAlive.dataset.state = status.processAlive ? 'alive' : 'stopped';
   cardInfo.commandSubmit.disabled = status.status !== 'RUNNING';
 
   cardInfo.lastServerStatus = status;
@@ -372,6 +425,9 @@ const updateRConStatus = (serverId, status) => {
   cardInfo.rconStatus.textContent = status.status;
   cardInfo.rconAuth.textContent = status.authed ? '認証済み' : '未認証';
   cardInfo.rconFallback.textContent = status.fallbacked ? '有効' : '無効';
+  cardInfo.rconStatus.dataset.state = status.status;
+  cardInfo.rconAuth.dataset.state = status.authed ? 'authenticated' : 'unauthenticated';
+  cardInfo.rconFallback.dataset.state = status.fallbacked ? 'enabled' : 'disabled';
   cardInfo.disconnectRConButton.disabled = !(
     status.status === 'CONNECTING'
     || status.status === 'AUTHENTICATING'

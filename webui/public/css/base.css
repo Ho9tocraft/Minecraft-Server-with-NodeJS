@@ -169,6 +169,12 @@ label {
   color: #f0f0f1;
   font-size: 0.9rem;
   text-decoration: none;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
 }
 
 .admin-menu__item:hover,
@@ -302,6 +308,12 @@ label {
   border-top: 1px solid #dcdcde;
   color: #1d2327;
   font-size: 1rem;
+}
+
+.server-card > h4:first-of-type {
+  margin-top: 1.25rem;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .server-card p {
@@ -461,4 +473,119 @@ label {
   .admin-footer {
     padding-inline: 0.75rem;
   }
+}
+
+.server-card__header {
+  margin: 0;
+  padding: 1.25rem;
+  border-bottom: 1px solid #dcdcde;
+  background: #f6f7f7;
+}
+
+.server-card__header h3 {
+  margin: 0;
+}
+
+.server-card__id,
+.server-card__rcon-compatible {
+  display: inline-block;
+  margin: 0.45rem 0 0;
+  color: #50575e;
+  font-size: 0.8rem;
+}
+
+.server-card__rcon-compatible {
+  margin-left: 0.7rem;
+}
+
+.server-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border-bottom: 1px solid #dcdcde;
+  background: #dcdcde;
+}
+
+.server-status-row {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.8rem 1rem;
+  background: #fff;
+}
+
+.server-status-row__label {
+  color: #50575e;
+  font-size: 0.75rem;
+}
+
+.server-status-row__value {
+  overflow-wrap: anywhere;
+  color: #1d2327;
+  font-size: 0.9rem;
+}
+
+.server-card__error {
+  margin-top: 1rem;
+  margin-bottom: 0;
+  padding: 0.7rem 0.85rem;
+  border-left: 0.25rem solid #d63638;
+  background: #fcf0f1;
+  color: #8a2424;
+  font-size: 0.85rem;
+}
+
+.server-card__notice {
+  min-height: 1.4rem;
+  color: #50575e;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 48rem) {
+  .server-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 30rem) {
+  .server-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .server-card__rcon-compatible {
+    margin-left: 0.45rem;
+  }
+}
+
+.server-status-row__value[data-state="RUNNING"],
+.server-status-row__value[data-state="alive"],
+.server-status-row__value[data-state="CONNECTED"],
+.server-status-row__value[data-state="authenticated"] {
+  color: #008a20;
+}
+
+.server-status-row__value[data-state="STARTING"],
+.server-status-row__value[data-state="CONNECTING"],
+.server-status-row__value[data-state="AUTHENTICATING"] {
+  color: #996800;
+}
+
+.server-status-row__value[data-state="STOPPED"],
+.server-status-row__value[data-state="DISCONNECTED"],
+.server-status-row__value[data-state="disabled"],
+.server-status-row__value[data-state="unauthenticated"] {
+  color: #50575e;
+}
+
+.server-status-row__value[data-state="CRASHED"],
+.server-status-row__value[data-state="DEPLETED"],
+.server-status-row__value[data-state="FAILED"] {
+  color: #b32d2e;
+}
+
+.server-status-row__value[data-state="FBMODE"],
+.server-status-row__value[data-state="TIMEOUT"],
+.server-status-row__value[data-state="enabled"] {
+  color: #996800;
 }
