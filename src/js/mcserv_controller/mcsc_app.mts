@@ -7,11 +7,19 @@ import express, {
   type Router,
 } from 'express';
 import helmet from 'helmet';
+import { join } from 'path';
 import { emitLog } from '../general_utils/logger_utils.mjs';
 import { type MCSCTrustProxy } from './mcsc_webconf.mjs';
 
-export const createWebApp = (sesMidw: RequestHandler, rAuth: Router, trustProxy: MCSCTrustProxy ): Express => {
+export const createWebApp = (sesMidw: RequestHandler, rAuth: Router, rPages: Router, trustProxy: MCSCTrustProxy ): Express => {
   const app = express();
+  const webUIRootDir = join(import.meta.dirname, '../../../webui');
+  const webUIViewsDir = join(webUIRootDir, 'views');
+  const webUIPublicDir = join(webUIRootDir, 'public');
+
+  app.set('views', webUIViewsDir);
+  app.set('view engine', 'ejs');
+
   app.disable('x-powered-by');
   app.set('trust proxy', trustProxy);
   // todo: この項目は、ビューキャッシュの無効化に使用(実運用時は…うーん、CSS/JS切り替えに備えて、あったほうがいいかも？)
@@ -26,6 +34,8 @@ export const createWebApp = (sesMidw: RequestHandler, rAuth: Router, trustProxy:
   }));
 
   app.use('/api/auth', rAuth); // REST APIじゃねぇか！www
+  app.use('/assets', express.static(webUIPublicDir));
+  app.use('/', rPages);
 
   app.get('/healthz', (_req: Request, res: Response) => {
     res.status(200).json({

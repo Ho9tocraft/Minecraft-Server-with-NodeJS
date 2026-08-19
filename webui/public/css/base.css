@@ -1,0 +1,82 @@
+:root {
+  color-scheme: dark;
+  font-family: 'Rounded-L Mgen+ 2c regular', 'BIZ UDGothic', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+body {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+label {
+  display: grid;
+  gap: 0.35rem;
+  margin-block: 1rem;
+}
+
+input,button {
+  font: inherit;
+  padding: 0.5rem;
+}
+
+#notice {
+  min-height: 1.5em;
+}
+
+[hidden] {
+  display: none;
+}
+
+#server-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.server-card {
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.server-card[data-running-status="RUNNING"] {
+  border-color: #66dd88;
+}
+
+.server-card[data-running-status="CRASHED"],
+.server-card[data-running-status="DEPLETED"] {
+  border-color: #ff6677;
+}
+
+.server-card h3 {
+  margin-top: 0;
+}
+
+.server-card p {
+  margin-block: 0.4rem;
+}
+
+.server-console {
+  max-height: 20rem;
+  overflow: auto;
+  padding: 0.75rem;
+  background: #111;
+  border: 1px solid #444;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.server-card textarea {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+}
+
+.server-card form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.server-card form p {
+  min-height: 1.5em;
+}

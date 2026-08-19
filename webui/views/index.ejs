@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="robots" content="noindex,noarchive,nosnippet,nofollow,notranslate"><!-- 検索Bot避け -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Minecraft Server Controller</title>
+    <link rel="stylesheet" href="/assets/css/base.css">
+    <script type="module" src="/assets/js/mcsc_login.mjs"></script>
+  </head>
+  <body>
+    <header>
+      <h1>Minecraft Server Controller</h1>
+    </header>
+
+    <main>
+      <section id="loading-panel" aria-live="polite"><p>セッションを確認しています。</p></section>
+
+      <section id="login-panel">
+        <h2>ログイン</h2>
+
+        <form id="login-form">
+          <label>ユーザー名<input id="username" name="username" type="text" autocomplete="username" maxlength="64" required></label>
+          <label>パスワード
+            <input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required></label>
+
+          <button id="login-submit" type="submit">ログイン</button>
+        </form>
+      </section>
+
+      <section id="authed-panel" hidden>
+        <h2>ログイン済み</h2>
+        <p id="authed-user"></p>
+        <button id="logout-submit" type="button">ログアウト</button>
+        <p>WebSocket: <span id="ws-status">未接続</span></p>
+        <section id="server-panel" hidden>
+          <h2>サーバー一覧</h2>
+          <div id="server-list"></div>
+        </section>
+        <p>〔工事中〕管理画面を準備しています。</p>
+      </section>
+
+      <p id="notice" role="status" aria-live="polite"></p>
+    </main>
+
+    <footer>
+      <address>Made by Ho9tocraft</address>
+    </footer>
+  </body>
+</html>

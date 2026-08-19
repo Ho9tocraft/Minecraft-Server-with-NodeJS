@@ -5,6 +5,7 @@ import {
   type MinecraftServerBase,
   type RConStatusSnapshot,
   type ServerConsoleMessage,
+  type ServerMetadata,
   type ServerStatusSnapshot,
 } from '../minecraft/servers.mjs';
 import { type MCSCWebSocketAccess } from './mcsc_websocket.mjs';
@@ -21,6 +22,7 @@ type MCSCWebSocketInfo = Readonly<{
 }>;
 type MCSCWebSocketMessage =
   | Readonly<{ type: 'hello', username: string }>
+  | Readonly<{ type: 'server-list', servers: readonly ServerMetadata[] }>
   | Readonly<{ type: 'server-status', serverId: string, status: ServerStatusSnapshot }>
   | Readonly<{ type: 'server-control-submitted', serverId: string, action: 'start' | 'stop' | 'restart' }>
   | Readonly<{ type: 'server-control-rejected', serverId: string, error: 'server_already_active' | 'maintenance_locked' | MCSCWSServerErrorMsg }>
@@ -364,6 +366,15 @@ export const installMCSCWebSocketBridge = (httpServer: Server, options: MCSCWebS
       sendMessage(webSocket, {
         type: 'hello',
         username: auth.username,
+      });
+
+      const servMDat = Object.freeze(options.servers.map((server) => {
+        return server.getServMDat();
+      }));
+
+      sendMessage(webSocket, {
+        type: 'server-list',
+        servers: servMDat,
       });
 
       const unsub = subscribeServerEvents(webSocket, options.servers);

@@ -2,6 +2,7 @@ import type { Server } from 'http';
 import { emitLog } from '../general_utils/logger_utils.mjs';
 import { createMCSCAuthRouter } from './mcsc_auth.mjs';
 import { createWebApp } from './mcsc_app.mjs';
+import { createMCSCPageRouter } from './mcsc_viewpage.mjs';
 import { createMCSCSession } from './mcsc_session.mjs';
 import { loadMCSCWebConfig } from './mcsc_webconf.mjs';
 import { closeMCSCHTTPServ, createMCSCHTTPServ, listenMCSCHTTPServ } from './mcsc_webserv.mjs';
@@ -20,7 +21,8 @@ export const ignitionMCSCWebUI = async (): Promise<MCSCWebUI> => {
     secureCookie: session.secureCookie,
     webSocketAccess: webSocketAccess,
   });
-  const app = createWebApp(sessionMiddleware, authRouter, trustProxy);
+  const pageRouter = createMCSCPageRouter();
+  const app = createWebApp(sessionMiddleware, authRouter, pageRouter, trustProxy);
   const server = createMCSCHTTPServ(app);
   const webSocketBridge: MCSCWebSocketBridge = installMCSCWebSocketBridge(server, {
     origin: origin, webSockAccess: webSocketAccess,

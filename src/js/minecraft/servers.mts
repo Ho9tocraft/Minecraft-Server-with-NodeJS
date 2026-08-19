@@ -43,6 +43,7 @@ export type LogSource = 'stdout' | 'stderr' | 'rcon';
 export type ServerConsoleMessage = Readonly<{ at: string, ts: number, source: LogSource, message: string, truncated: boolean }>;
 export type RConStatusSnapshot = Readonly<{ status: RConConnectionState, authed: boolean, fallbacked: boolean, lastError: string | null }>;
 export type ServerStatusSnapshot = Readonly<{ status: RunningStatus, maintenance: boolean, processAlive: boolean }>;
+export type ServerMetadata = Readonly<{ id: string, name: string, rconCompat: boolean }>;
 
 type searchResultInfo = {
   idx: number;
@@ -415,6 +416,29 @@ export abstract class MinecraftServerBase extends EventEmitter {
     this.clearRconTimers();
     this.rconClient.Inst?.disconnect();
   }
+  /* ---- STATUS CHECK ---- */
+  public getRConStatus(): RConStatusSnapshot {
+    return Object.freeze({
+      status: this.rconClient.CState,
+      authed: this.rconClient.Auth,
+      fallbacked: this.rconClient.FBMode,
+      lastError: this.rconClient.LastError,
+    });
+  };
+  public getServStatus(): ServerStatusSnapshot {
+    return Object.freeze({
+      status: this.runningStat,
+      maintenance: this.mayMaintenance,
+      processAlive: this.serverProc !== null && this.serverProc.exitCode === null,
+    });
+  }
+  public getServMDat(): ServerMetadata {
+    return Object.freeze({
+      id: this.srvId,
+      name: this.srvName,
+      rconCompat: this.rconCompatible,
+    });
+  };
 
   // protected:
   /**
@@ -438,7 +462,6 @@ export abstract class MinecraftServerBase extends EventEmitter {
       if (lastLine.length > 0) this.handleServerLog(source, lastLine);
     });
   }
-
   /**
    * Handling Server Logs
    * @param source Readable stream type (stdout/stderr)
@@ -470,6 +493,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.writeCurrentJSONProcStat();
     }
   }
+  /* ---- COMMAND PUBLISHER ---- */
   protected publishConsoleMessage(source: LogSource, rawMsg: string): void {
     const { MaxHistoryRecord, MaxMessageChars } = ConsoleDefinition;
     const truncated = rawMsg.length > MaxMessageChars;
@@ -487,21 +511,6 @@ export abstract class MinecraftServerBase extends EventEmitter {
   }
   public getConsoleHistory(): readonly ServerConsoleMessage[] {
     return this.consoleHistory.slice();
-  }
-  public getRConStatus(): RConStatusSnapshot {
-    return Object.freeze({
-      status: this.rconClient.CState,
-      authed: this.rconClient.Auth,
-      fallbacked: this.rconClient.FBMode,
-      lastError: this.rconClient.LastError,
-    });
-  };
-  public getServStatus(): ServerStatusSnapshot {
-    return Object.freeze({
-      status: this.runningStat,
-      maintenance: this.mayMaintenance,
-      processAlive: this.serverProc !== null && this.serverProc.exitCode === null,
-    });
   }
 
   protected rebuildPrevServerJSON(): MinecraftServerData {
