@@ -54,6 +54,7 @@ const startedRegExp = /Done \([0-9]+(\.[0-9]*)?s\)\u0021/;
 const RConReconnectDelay = 1000;
 const RConMaxReconnectAttempts = 3;
 const RConConnectionTimeout = 10 * 1000;
+const RConCommandResponseTimeout = 30 * 1000;
 const RConIdleTimeout = 15 * 60 * 1000;
 const ConsoleDefinition = {
   MaxHistoryRecord: 400,
@@ -94,6 +95,8 @@ export abstract class MinecraftServerBase extends EventEmitter {
   protected consoleHistory: ServerConsoleMessage[] = [];
   protected rconReconnectTimer: NodeJS.Timeout | null = null;
   protected rconReconnectAttempts: number = 0;
+  protected rconCommandTimer: NodeJS.Timeout | null = null;
+  protected rconInFlightCmd: string | null = null;
   /**
    * [PUBLIC] Current MinecraftServerData JSON
    */
@@ -681,6 +684,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.rconClient.FBMode = false;
       this.rconClient.CState = 'DISCONNECTED';
       this.rconClient.LastError = null;
+      this.rconInFlightCmd = null;
       this.rconClient.QueuedCmds = [];
 
       this.publishRConStatus();
@@ -722,6 +726,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
     const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
 
     this.clearRconTimers();
+    this.rconInFlightCmd = null;
     this.rconReconnectAttempts = 0;
     this.rconClient.QueuedCmds = [];
     this.rconClient.Auth = false;
@@ -763,15 +768,27 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.flushCommandQueue();
     }).on('response', (str: unknown) => {
       if (this.rconClient.Inst !== client) return;
+
       if (typeof str !== 'string') {
-        emitLog(WARN, `Ignored invalid RCON response payload type: ${typeof str}`, { optStr: rconLog });
+        emitLog(
+          WARN,
+          `Ignored invalid RCON response payload type: ${typeof str}`,
+          { optStr: rconLog },
+        );
         return;
       }
 
+      // Minecraftは正常実行でも空のRCON応答を返す。
+      // 空文字を含め、応答を受けた時点でこの1コマンドは完了扱いにする。
+      this.clearRconCmdTimer();
+      this.rconInFlightCmd = null;
       this.touchRconIdleTimer(client);
+
       for (const line of str.split(/(?:\r|\n|\r\n)/)) {
         if (line.length > 0) this.handleServerLog('rcon', line);
       }
+
+      this.flushCommandQueue();
     }).on('error', (err) => {
       if (this.rconClient.Inst !== client) return;
 
@@ -780,6 +797,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
         return;
       }
 
+      this.expireRconIFC('RCon Connection Error.');
       this.clearRconTimers();
 
       if (this.rconClient.ManualDisconnect) {
@@ -796,6 +814,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
     }).on('end', () => {
       if (this.rconClient.Inst !== client) return;
 
+      this.expireRconIFC('RCon Connection Closed.');
       this.clearRconTimers();
       this.rconClient.Auth = false;
 
@@ -831,17 +850,32 @@ export abstract class MinecraftServerBase extends EventEmitter {
   }
   protected flushCommandQueue(): void {
     const client = this.rconClient.Inst;
-    if (this.rconCompatible && !this.rconClient.FBMode) {
-      if (client === null || !this.rconClient.Auth) return;
 
-      const cmds = this.rconClient.QueuedCmds.splice(0);
-      cmds.forEach((cmd) => client.send(cmd, {}));
+    if (this.rconCompatible && !this.rconClient.FBMode) {
+      if (
+        client === null
+        || !this.rconClient.Auth
+        || this.rconInFlightCmd !== null
+      ) {
+        return;
+      }
+
+      const command = this.rconClient.QueuedCmds.shift();
+
+      if (typeof command === 'undefined') {
+        this.touchRconIdleTimer(client);
+        return;
+      }
+
+      this.rconInFlightCmd = command;
+      this.armRconCmdTimer(client);
+      client.send(command, {});
       this.touchRconIdleTimer(client);
       return;
     }
 
-    const cmds = this.rconClient.QueuedCmds.splice(0);
-    cmds.forEach((cmd) => this.instantStdinCommand(cmd));
+    const commands = this.rconClient.QueuedCmds.splice(0);
+    commands.forEach((command) => this.instantStdinCommand(command));
   }
   protected verifyRconConfig(): boolean {
     const confValidPort = Number.isInteger(this.rconPort) && this.rconPort > 0 && this.rconPort <= 65535;
@@ -889,6 +923,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
     const { WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
 
+    this.expireRconIFC('STDIN Fallback Mode was Enabled.');
     this.rconClient.FBMode = true;
     this.rconClient.Auth = false;
     this.rconClient.CState = 'FBMODE';
@@ -961,6 +996,47 @@ export abstract class MinecraftServerBase extends EventEmitter {
     if (this.rconIdleTimer !== null) clearTimeout(this.rconIdleTimer);
     this.rconIdleTimer = null;
   }
+  protected clearRconCmdTimer(): void {
+    if (this.rconCommandTimer !== null) {
+      clearTimeout(this.rconCommandTimer);
+    }
+
+    this.rconCommandTimer = null;
+  }
+  protected expireRconIFC(reason: string): void {
+    if (this.rconInFlightCmd === null) return;
+
+    this.clearRconCmdTimer();
+    this.rconInFlightCmd = null;
+
+    const { WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+
+    emitLog(
+      WARN,
+      `RCON command result is unknown; it will not be retried. ${reason}`,
+      { optStr: `[RCON][${this.srvId.toUpperCase()}]` },
+    );
+  }
+  protected armRconCmdTimer(client: Rcon): void {
+    this.clearRconCmdTimer();
+
+    this.rconCommandTimer = setTimeout(() => {
+      if (
+        this.rconClient.Inst !== client
+        || !this.rconClient.Auth
+        || this.rconInFlightCmd === null
+      ) {
+        return;
+      }
+
+      this.rconClient.CState = 'FAILED';
+      this.rconClient.LastError =
+        `RCON command response timeout: over ${RConCommandResponseTimeout}ms`;
+
+      this.publishRConStatus();
+      client.disconnect();
+    }, RConCommandResponseTimeout);
+  }
   protected clearRconReconnectTimer(): void {
     if (this.rconReconnectTimer !== null) {
       clearTimeout(this.rconReconnectTimer);
@@ -1003,6 +1079,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
     this.clearRconConnTimer();
     this.clearRconIdleTimer();
     this.clearRconReconnectTimer();
+    this.clearRconCmdTimer();
   }
   protected armRconConnTimer(client: Rcon): void {
     this.clearRconConnTimer();
