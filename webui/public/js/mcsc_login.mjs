@@ -15,7 +15,7 @@ const webSocketStatus = document.querySelector('#ws-status');
 const serverList = document.querySelector('#server-list');
 const serverPanel = document.querySelector('#server-panel');
 const logoutSubmit = document.querySelector('#logout-submit');
-const WebSocketReconnectDelayMs = 3 * 1000; // 30 sec
+const WebSocketReconnectDelayMs = 3 * 1000; // 3 sec
 let shouldMaintainWebSocket = false;
 let reconnectTimer = null;
 
