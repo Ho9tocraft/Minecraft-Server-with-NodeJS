@@ -4,11 +4,13 @@ import { createMCSCAuthRouter } from './mcsc_auth.mjs';
 import { createWebApp } from './mcsc_app.mjs';
 import { createMCSCSession } from './mcsc_session.mjs';
 import { loadMCSCWebConfig } from './mcsc_webconf.mjs';
-import { createMCSCHTTPServ, listenMCSCHTTPServ } from './mcsc_webserv.mjs';
+import { closeMCSCHTTPServ, createMCSCHTTPServ, listenMCSCHTTPServ } from './mcsc_webserv.mjs';
 import { MCSCWebSocketAccess } from './mcsc_websocket.mjs';
-import { installMCSCWebSocketBridge } from './mcsc_wsbridge.mjs';
+import { installMCSCWebSocketBridge, type MCSCWebSocketBridge } from './mcsc_wsbridge.mjs';
 
-export const ignitionMCSCWebUI = async (): Promise<Server> => {
+export type MCSCWebUI = Readonly<{ httpServer: Server, close: () => Promise<void> }>;
+
+export const ignitionMCSCWebUI = async (): Promise<MCSCWebUI> => {
   const { http, initialAdmin, origin, session, trustProxy } = loadMCSCWebConfig();
   const webSocketAccess = new MCSCWebSocketAccess();
 
@@ -20,10 +22,19 @@ export const ignitionMCSCWebUI = async (): Promise<Server> => {
   });
   const app = createWebApp(sessionMiddleware, authRouter, trustProxy);
   const server = createMCSCHTTPServ(app);
-  installMCSCWebSocketBridge(server, {
+  const webSocketBridge: MCSCWebSocketBridge = installMCSCWebSocketBridge(server, {
     origin: origin, webSockAccess: webSocketAccess,
-    servers: globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES,
+    servers: globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES
   });
+
+  let closingPromise: Promise<void> | null = null;
+  const closeWebUI = (): Promise<void> => {
+    if (closingPromise !== null) return closingPromise;
+    webSocketBridge.close();
+    closingPromise = closeMCSCHTTPServ(server);
+
+    return closingPromise;
+  };
 
   await listenMCSCHTTPServ(server, http);
 
@@ -34,5 +45,8 @@ export const ignitionMCSCWebUI = async (): Promise<Server> => {
     { optStr: '[WEB-UI]' },
   );
 
-  return server;
+  return Object.freeze({
+    httpServer: server,
+    close: closeWebUI
+  });
 };

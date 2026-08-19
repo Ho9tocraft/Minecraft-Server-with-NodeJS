@@ -40,8 +40,9 @@ export type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'STARTING' | 'RUNNING' | '
  */
 export type RConConnectionState = 'DISCONNECTED' | 'CONNECTING' | 'AUTHENTICATING' | 'CONNECTED' | 'FBMODE' | 'FAILED' | 'TIMEOUT';
 export type LogSource = 'stdout' | 'stderr' | 'rcon';
-export type ServerConsoleMessage = Readonly<{at: string, ts: number, source: LogSource, message: string, truncated: boolean}>;
-export type RConStatusSnapshot = Readonly<{status: RConConnectionState, authed: boolean, fallbacked: boolean, lastError: string | null}>;
+export type ServerConsoleMessage = Readonly<{ at: string, ts: number, source: LogSource, message: string, truncated: boolean }>;
+export type RConStatusSnapshot = Readonly<{ status: RConConnectionState, authed: boolean, fallbacked: boolean, lastError: string | null }>;
+export type ServerStatusSnapshot = Readonly<{ status: RunningStatus, maintenance: boolean, processAlive: boolean }>;
 
 type searchResultInfo = {
   idx: number;
@@ -295,6 +296,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
       saveServerDataJSON(this.currentJSONStat, supress);
       this.prevJSONStat = this.rebuildPrevServerJSON();
     }
+    this.publishServerStatus();
   }
   public overwriteCWDir(pDir: string, pExec?: boolean) {
     if (globalThis.DEBUG_MODE || pExec) this.srvCwd = pDir;
@@ -494,6 +496,13 @@ export abstract class MinecraftServerBase extends EventEmitter {
       lastError: this.rconClient.LastError,
     });
   };
+  public getServStatus(): ServerStatusSnapshot {
+    return Object.freeze({
+      status: this.runningStat,
+      maintenance: this.mayMaintenance,
+      processAlive: this.serverProc !== null && this.serverProc.exitCode === null,
+    });
+  }
 
   protected rebuildPrevServerJSON(): MinecraftServerData {
     const { id, name, homeDir, work, process } = this.currentJSONStat;
@@ -999,6 +1008,9 @@ export abstract class MinecraftServerBase extends EventEmitter {
   protected publishRConStatus(): void {
     this.emit('rcon-status', this.getRConStatus());
   }
+  protected publishServerStatus(): void {
+    this.emit('server-status', this.getServStatus());
+  };
 };
 
 export class MinecraftServer extends MinecraftServerBase {
