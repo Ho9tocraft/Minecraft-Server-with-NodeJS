@@ -51,6 +51,8 @@ type searchResultInfo = {
 };
 
 const startedRegExp = /Done \([0-9]+(\.[0-9]*)?s\)\u0021/;
+const RConReconnectDelay = 1000;
+const RConMaxReconnectAttempts = 3;
 const RConConnectionTimeout = 10 * 1000;
 const RConIdleTimeout = 15 * 60 * 1000;
 const ConsoleDefinition = {
@@ -90,6 +92,8 @@ export abstract class MinecraftServerBase extends EventEmitter {
   protected rconConnTimer: NodeJS.Timeout | null = null;
   protected rconIdleTimer: NodeJS.Timeout | null = null;
   protected consoleHistory: ServerConsoleMessage[] = [];
+  protected rconReconnectTimer: NodeJS.Timeout | null = null;
+  protected rconReconnectAttempts: number = 0;
   /**
    * [PUBLIC] Current MinecraftServerData JSON
    */
@@ -718,6 +722,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
     const rconLog = `[RCON][${this.srvId.toUpperCase()}]`;
 
     this.clearRconTimers();
+    this.rconReconnectAttempts = 0;
     this.rconClient.QueuedCmds = [];
     this.rconClient.Auth = false;
     this.rconClient.ManualDisconnect = false;
@@ -746,6 +751,8 @@ export abstract class MinecraftServerBase extends EventEmitter {
       if (this.rconClient.Inst !== client) return;
 
       this.clearRconConnTimer();
+      this.clearRconReconnectTimer();
+      this.rconReconnectAttempts = 0;
       this.rconClient.Auth = true;
       this.rconClient.CState = 'CONNECTED';
       this.rconClient.LastError = null;
@@ -785,7 +792,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.rconClient.LastError = err instanceof Error ? err.message : `${err}`;
 
       emitLog(ERROR, err, { optStr: rconLog });
-      this.enableStdinFBMode();
+      this.publishRConStatus();
     }).on('end', () => {
       if (this.rconClient.Inst !== client) return;
 
@@ -808,22 +815,19 @@ export abstract class MinecraftServerBase extends EventEmitter {
         return;
       }
 
-      if (this.rconClient.CState === 'CONNECTING' && this.rconClient.QueuedCmds.length > 0) {
-        setTimeout(() => {
-          if (this.rconClient.Inst !== client || this.rconClient.FBMode || this.rconClient.Auth) return;
-
-          this.armRconConnTimer(client);
-          client.connect();
-        }, 10); // 不具合対策のため、10msだけずらして実行。
-        return;
-      }
-
       this.rconClient.CState = 'FAILED';
       this.rconClient.LastError ??= 'RCON connection closed unexpectedly.';
-      emitLog(WARN, 'RCON connection closed unexpectedly', { optStr: rconLog });
+      emitLog(WARN, 'RCON connection closed unexpectedly. Retrying.', {
+        optStr: rconLog,
+      });
       this.publishRConStatus();
-      this.enableStdinFBMode();
+      this.scheduleRconReconnect(client);
     });
+
+    this.rconClient.CState = 'CONNECTING';
+    this.publishRConStatus();
+    this.armRconConnTimer(client);
+    client.connect();
   }
   protected flushCommandQueue(): void {
     const client = this.rconClient.Inst;
@@ -957,9 +961,48 @@ export abstract class MinecraftServerBase extends EventEmitter {
     if (this.rconIdleTimer !== null) clearTimeout(this.rconIdleTimer);
     this.rconIdleTimer = null;
   }
+  protected clearRconReconnectTimer(): void {
+    if (this.rconReconnectTimer !== null) {
+      clearTimeout(this.rconReconnectTimer);
+    }
+
+    this.rconReconnectTimer = null;
+  }
+  protected scheduleRconReconnect(client: Rcon): void {
+    if (this.rconClient.Inst !== client || this.rconClient.FBMode || this.rconClient.ManualDisconnect
+      || this.runningStat !== 'RUNNING' || this.rconReconnectTimer !== null) return;
+
+    if (this.rconReconnectAttempts >= RConMaxReconnectAttempts) {
+      this.enableStdinFBMode();
+      return;
+    }
+
+    this.rconReconnectAttempts += 1;
+    this.rconClient.CState = 'CONNECTING';
+    this.rconClient.ManualDisconnect = false;
+    this.publishRConStatus();
+
+    this.rconReconnectTimer = setTimeout(() => {
+      this.rconReconnectTimer = null;
+
+      if (
+        this.rconClient.Inst !== client
+        || this.rconClient.FBMode
+        || this.rconClient.ManualDisconnect
+        || this.rconClient.Auth
+        || this.runningStat !== 'RUNNING'
+      ) {
+        return;
+      }
+
+      this.armRconConnTimer(client);
+      client.connect();
+    }, RConReconnectDelay);
+  }  
   protected clearRconTimers(): void {
     this.clearRconConnTimer();
     this.clearRconIdleTimer();
+    this.clearRconReconnectTimer();
   }
   protected armRconConnTimer(client: Rcon): void {
     this.clearRconConnTimer();
@@ -969,7 +1012,8 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.rconClient.CState = 'FAILED';
       this.rconClient.LastError = `RCON connect/auth proc timeout: over ${RConConnectionTimeout}ms`;
 
-      this.enableStdinFBMode();
+      this.publishRConStatus();
+      client.disconnect();
     }, RConConnectionTimeout);
   }
   protected touchRconIdleTimer(client: Rcon): void {
