@@ -245,6 +245,19 @@ const renderServerList = (servers) => {
       event.preventDefault();
       submitCommandBatch(server.id, commandInput, commandNotice);
     });
+    commandInput.addEventListener('keydown', (event) => {
+      if (
+        event.isComposing
+        || event.key !== 'Enter'
+        || !event.ctrlKey
+        || commandSubmit.disabled
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      submitCommandBatch(server.id, commandInput, commandNotice);
+    });
 
     consoleTitle.textContent = 'コンソール';
     consoleView.className = 'server-console';

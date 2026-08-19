@@ -8,7 +8,7 @@
   "main": "./dist/index.mjs",
   "scripts": {
     "test": "tsc -d && node ./dist/index.mjs --launch-debug",
-    "test-web": "tsc -d && node --env-file=./mcsc_webui.env ./dist/index.mjs -w",
+    "test-web": "tsc -d && node --env-file=./mcsc_webui.env ./dist/index.mjs -w -d",
     "start": "node --env-file=./mcsc_webui.env ./dist/index.mjs",
     "build-watch": "tsc -d -w",
     "install": "npx tsc",

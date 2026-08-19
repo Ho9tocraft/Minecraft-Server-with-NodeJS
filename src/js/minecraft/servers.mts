@@ -626,7 +626,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
     return PorV;
   }
   protected combineJVMArgs(jvmMemory: string, jvmExtra: string, jarFile: string, jarArgs: string): string {
-    return `${jvmMemory} ${jvmExtra} ${this.buildJarFileArgs(jarFile)} ${jarArgs}`;
+    return `${jvmMemory} -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8 ${jvmExtra} ${this.buildJarFileArgs(jarFile)} ${jarArgs}`;
   }
   protected buildLaunchCode(rawArgs: string) {
     return rawArgs.split(' ');

@@ -6,6 +6,7 @@ const { dirname } = import.meta;
 export const coreModuleInitProcess = (): void => {
   if (!isAccessableNeededFiles()) throw new EvalError('Needed Files not valid.');
   globalThis.MCSERV_CONTROLLER_ENV.GLOBAL_CONFIG = loadGlobalDataJSON();
+  if (globalThis.DEBUG_MODE) globalThis.MCSERV_CONTROLLER_ENV.GLOBAL_CONFIG.global_data.mcsRootDir = 'F:/MinecraftServers/Backup';
   globalThis.MCSERV_CONTROLLER_ENV.SERVER_CONFIG_INFO = loadServerDataJSON().servers;
   generateServerInstance();
 };

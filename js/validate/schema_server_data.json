@@ -117,7 +117,7 @@
                         "properties": {
                             "runningStatus": {
                                 "type": "string",
-                                "pattern": "^(UNDEFINED|STOPPED|RUNNING|CRASHED)$"
+                                "pattern": "^(UNDEFINED|STOPPED|STARTING|RUNNING|CRASHED|FORCE_STOPPED|DEPLETED)$"
                             },
                             "maintenanceMode": {
                                 "type": "boolean"
