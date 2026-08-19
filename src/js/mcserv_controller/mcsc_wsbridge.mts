@@ -26,6 +26,8 @@ type MCSCWebSocketMessage =
   | Readonly<{ type: 'server-status', serverId: string, status: ServerStatusSnapshot }>
   | Readonly<{ type: 'server-control-submitted', serverId: string, action: 'start' | 'stop' | 'restart' }>
   | Readonly<{ type: 'server-control-rejected', serverId: string, error: 'server_already_active' | 'maintenance_locked' | MCSCWSServerErrorMsg }>
+  | Readonly<{ type: 'maintenance-submitted', serverId: string, enabled: boolean }>
+  | Readonly<{ type: 'maintenance-rejected', serverId: string, error: MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'console-history', serverId: string, entries: readonly ServerConsoleMessage[] }>
   | Readonly<{ type: 'console-output', serverId: string, entry: ServerConsoleMessage }>
   | Readonly<{ type: 'rcon-status', serverId: string, status: RConStatusSnapshot }>
@@ -37,8 +39,12 @@ type MCSCWebSocketMessage =
 type MCSCWebSocketCmdBatch = Readonly<{ type: 'command-batch', serverId: string, cmds: readonly string[] }>;
 type MCSCWebSocketRConDisconnect = Readonly<{ type: 'rcon-disconnect', serverId: string }>;
 type MCSCWebSocketServerControl = Readonly<{ type: 'server-control', serverId: string, act: 'start' | 'stop' | 'restart' }>;
+type MCSCWebSocketMaintenanceSet = Readonly<{ type: 'maintenance-set', serverId: string, enabled: boolean }>;
 type MCSCWebSocketIncomingTell =
-  | MCSCWebSocketCmdBatch | MCSCWebSocketRConDisconnect | MCSCWebSocketServerControl;
+  | MCSCWebSocketCmdBatch
+  | MCSCWebSocketRConDisconnect
+  | MCSCWebSocketMaintenanceSet
+  | MCSCWebSocketServerControl;
 type HTTPErrorCodeText = // めんどくせーのでここでエラーコード列挙させろォ！
   | '400 Bad Request'
   | '401 Unauthorized'
@@ -96,7 +102,7 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
   if (typeof parsedMsg !== 'object' || parsedMsg === null || Array.isArray(parsedMsg)) return null;
 
   const msg = parsedMsg as Record<string, unknown>;
-  const { action: act, cmds, serverId, type } = msg;
+  const { action: act, cmds, enabled, serverId, type } = msg;
 
   if (typeof serverId !== 'string' || serverId.length === 0 || serverId.length > 128) return null;
 
@@ -104,13 +110,16 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
     type: 'rcon-disconnect',
     serverId: serverId
   });
-  if (type === 'server-control' && (act === 'start' || act === 'stop' || act === 'restart')) {
-    return Object.freeze({
-      type: 'server-control',
-      serverId: serverId,
-      act: act
-    } as MCSCWebSocketServerControl);
-  }
+  if (type === 'maintenance-set' && typeof enabled === 'boolean') return Object.freeze({
+    type: 'maintenance-set',
+    serverId: serverId,
+    enabled: enabled
+  });
+  if (type === 'server-control' && (act === 'start' || act === 'stop' || act === 'restart')) return Object.freeze({
+    type: 'server-control',
+    serverId: serverId,
+    act: act
+  });
 
   if (type !== 'command-batch' || !Array.isArray(cmds) || cmds.length === 0
     || cmds.length > 32 || !cmds.every((cmd) => typeof cmd === 'string')) return null;
@@ -122,7 +131,7 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
 }
 
 const handleCmdBatch = (socket: WebSocket, cmdBatch: MCSCWebSocketCmdBatch, servers: readonly MinecraftServerBase[]): void => {
-  const tgtServ = servers.find((server) => { return server.srvId === cmdBatch.serverId });
+  const tgtServ = servers.find((server) => { return server.srvId === cmdBatch.serverId; });
 
   if (typeof tgtServ === 'undefined') {
     sendMessage(socket, {
@@ -152,7 +161,7 @@ const handleCmdBatch = (socket: WebSocket, cmdBatch: MCSCWebSocketCmdBatch, serv
 };
 
 const handleRConDisconnect = (socket: WebSocket, disconnReq: MCSCWebSocketRConDisconnect, servers: readonly MinecraftServerBase[]): void => {
-  const tgtServ = servers.find((server) => { return server.srvId === disconnReq.serverId });
+  const tgtServ = servers.find((server) => { return server.srvId === disconnReq.serverId; });
 
   if (typeof tgtServ === 'undefined') {
     sendMessage(socket, {
@@ -179,9 +188,30 @@ const handleRConDisconnect = (socket: WebSocket, disconnReq: MCSCWebSocketRConDi
   });
 };
 
+const handleMaintenanceSet = (socket: WebSocket, maintenanceReq: MCSCWebSocketMaintenanceSet, servers: readonly MinecraftServerBase[]): void => {
+  const targetServer = servers.find((server) => { return server.srvId === maintenanceReq.serverId; });
+
+  if (typeof targetServer === 'undefined') {
+    sendMessage(socket, {
+      type: 'maintenance-rejected',
+      serverId: maintenanceReq.serverId,
+      error: 'server_not_found',
+    });
+    return;
+  }
+
+  targetServer.setMaintenanceMode(maintenanceReq.enabled);
+
+  sendMessage(socket, {
+    type: 'maintenance-submitted',
+    serverId: maintenanceReq.serverId,
+    enabled: maintenanceReq.enabled
+  });
+};
+
 const handleServControl = (socket: WebSocket, controlReq: MCSCWebSocketServerControl, servers: readonly MinecraftServerBase[]): void => {
   const { serverId, act } = controlReq;
-  const tgtServ = servers.find((server) => { return server.srvId === serverId });
+  const tgtServ = servers.find((server) => { return server.srvId === serverId; });
 
   if (typeof tgtServ === 'undefined') {
     sendMessage(socket, {
@@ -252,6 +282,9 @@ const handleIncomingTell = (socket: WebSocket, data: WebSocket.RawData, isBin: b
       break;
     case 'rcon-disconnect':
       handleRConDisconnect(socket, incomingTell, servers);
+      break;
+    case 'maintenance-set':
+      handleMaintenanceSet(socket, incomingTell, servers);
       break;
     case 'server-control':
       handleServControl(socket, incomingTell, servers);

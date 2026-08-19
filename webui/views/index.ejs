@@ -23,8 +23,10 @@
   <div class="admin-layout">
     <aside class="admin-sidebar" aria-label="管理メニュー">
       <nav>
-        <button class="admin-menu__item admin-menu__item--active" type="button" data-scroll-target="dashboard-heading">ダッシュボード</button>
-        <button class="admin-menu__item" type="button" data-scroll-target="server-list">サーバー一覧</button>
+        <button class="admin-menu__item admin-menu__item--active" type="button" data-view="dashboard"
+          data-scroll-target="dashboard-heading">ダッシュボード</button>
+        <button class="admin-menu__item" type="button" data-view="dashboard"
+          data-scroll-target="server-list">サーバー一覧</button>
       </nav>
     </aside>
 
@@ -49,15 +51,29 @@
       </section>
 
       <section id="authed-panel" hidden>
-        <div id="dashboard-heading" class="page-heading">
-          <h1>ダッシュボード</h1>
-          <p>登録済み Minecraft Server の状態確認と操作を行えます。</p>
-          <p class="websocket-indicator">WebSocket: <span id="ws-status">未接続</span></p>
-        </div>
+        <section id="dashboard-view">
+          <div id="dashboard-heading" class="page-heading">
+            <h1>ダッシュボード</h1>
+            <p>登録済み Minecraft Server の状態確認と操作を行えます。</p>
+            <p class="websocket-indicator">WebSocket: <span id="ws-status">未接続</span></p>
+          </div>
 
-        <section id="server-panel" hidden>
-          <h2>サーバー一覧</h2>
-          <div id="server-list"></div>
+          <section id="server-panel" class="server-panel" hidden>
+            <h2>サーバー一覧</h2>
+            <div id="server-list"></div>
+          </section>
+        </section>
+
+        <section id="server-detail-view" hidden>
+          <div class="page-heading">
+            <div>
+              <button id="server-detail-back" type="button">&lt;&minus; サーバー一覧へ戻る</button>
+              <h1 id="server-detail-title">サーバー詳細</h1>
+              <p>状態確認とサーバー管理を行えます。</p>
+            </div>
+          </div>
+
+          <section id="server-detail-content"></section>
         </section>
 
         <p id="notice" role="status" aria-live="polite"></p>

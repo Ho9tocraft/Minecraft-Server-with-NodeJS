@@ -14,6 +14,11 @@ const usernameInput = document.querySelector('#username');
 const webSocketStatus = document.querySelector('#ws-status');
 const serverList = document.querySelector('#server-list');
 const serverPanel = document.querySelector('#server-panel');
+const dashboardView = document.querySelector('#dashboard-view');
+const serverDetailBack = document.querySelector('#server-detail-back');
+const serverDetailContent = document.querySelector('#server-detail-content');
+const serverDetailTitle = document.querySelector('#server-detail-title');
+const serverDetailView = document.querySelector('#server-detail-view');
 const logoutSubmit = document.querySelector('#logout-submit');
 const navigationItems = document.querySelectorAll('[data-scroll-target]');
 
@@ -28,20 +33,26 @@ const setActiveNavigation = (activeItem) => {
 
 navigationItems.forEach((navigationItem) => {
   navigationItem.addEventListener('click', () => {
+    if (navigationItem.dataset.view === 'dashboard') {
+      showDashboard();
+    }
+
     const targetId = navigationItem.dataset.scrollTarget;
 
     if (typeof targetId !== 'string' || targetId.length === 0) return;
 
-    const target = document.querySelector(`#${targetId}`);
+    requestAnimationFrame(() => {
+      const target = document.querySelector(`#${targetId}`);
 
-    if (target === null) return;
+      if (target === null) return;
+
+      target.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
 
     setActiveNavigation(navigationItem);
-
-    target.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    });
   });
 });
 
@@ -57,6 +68,42 @@ let activeWebSocket = null;
 const serverCards = new Map();
 const MaxConsoleEntries = 400;
 let webSocketConnecting = false;
+let selectedServerId = null;
+
+const showDashboard = () => {
+  selectedServerId = null;
+  serverDetailContent.replaceChildren();
+  serverDetailView.hidden = true;
+  dashboardView.hidden = false;
+
+  const cards = Array.from(serverCards.values(), (cardInfo) => {
+    return cardInfo.card;
+  });
+
+  serverList.replaceChildren(...cards);
+};
+
+const showServerDetail = (serverId) => {
+  const cardInfo = serverCards.get(serverId);
+
+  if (typeof cardInfo === 'undefined') return;
+
+  selectedServerId = serverId;
+  serverDetailTitle.textContent = `${cardInfo.name} - サーバー詳細`;
+
+  dashboardView.hidden = true;
+  serverDetailView.hidden = false;
+  serverDetailContent.replaceChildren(cardInfo.card);
+
+  window.scrollTo({
+    top: 0,
+    behavior: 'smooth',
+  });
+};
+
+serverDetailBack.addEventListener('click', () => {
+  showDashboard();
+});
 
 const setWebSocketStatus = (message) => {
   webSocketStatus.textContent = message;
@@ -115,12 +162,13 @@ const submitCommandBatch = (serverId, commandInput, commandNotice) => {
   commandNotice.textContent = `${cmds.length} 件のコマンドを送信しました。`;
 };
 
-const createStatusRow = (labelText) => {
+const createStatusRow = (labelText, statusKey) => {
   const row = document.createElement('div');
   const label = document.createElement('span');
   const value = document.createElement('strong');
 
   row.className = 'server-status-row';
+  row.dataset.statusKey = statusKey;
   label.className = 'server-status-row__label';
   value.className = 'server-status-row__value';
 
@@ -140,6 +188,10 @@ const updateServerControlButtons = (cardInfo, status) => {
   cardInfo.startButton.disabled = !canStart;
   cardInfo.stopButton.disabled = status.status !== 'RUNNING';
   cardInfo.restartButton.disabled = status.status !== 'RUNNING';
+  cardInfo.maintenanceButton.disabled = false;
+  cardInfo.maintenanceButton.textContent = status.maintenance
+    ? 'メンテナンス解除'
+    : 'メンテナンス有効化';
 };
 
 const submitServerControl = (serverId, action) => {
@@ -191,23 +243,25 @@ const renderServerList = (servers) => {
     const card = document.createElement('article');
     const cardHeader = document.createElement('header');
     const statusGrid = document.createElement('div');
-    const title = document.createElement('h3');
+    const title = document.createElement('button');
     const serverId = document.createElement('p');
     const rconCompatible = document.createElement('p');
-    const serverStatus = createStatusRow('サーバー状態');
-    const processAlive = createStatusRow('プロセス');
-    const maintenance = createStatusRow('メンテナンス');
-    const rconStatus = createStatusRow('RCON 状態');
-    const rconAuth = createStatusRow('RCON 認証');
-    const rconFallback = createStatusRow('stdin フォールバック');
+    const serverStatus = createStatusRow('サーバー状態', 'server');
+    const processAlive = createStatusRow('プロセス', 'process');
+    const maintenance = createStatusRow('メンテナンス', 'maintenance');
+    const rconStatus = createStatusRow('RCON 状態', 'rcon-status');
+    const rconAuth = createStatusRow('RCON 認証', 'rcon-auth');
+    const rconFallback = createStatusRow('stdin フォールバック', 'rcon-fallback');
     const rconError = document.createElement('p');
     const consoleTitle = document.createElement('h4');
+    const consoleHeader = document.createElement('div');
     const consoleView = document.createElement('pre');
     const controlTitle = document.createElement('h4');
     const controlButtons = document.createElement('div');
     const startButton = document.createElement('button');
     const stopButton = document.createElement('button');
     const restartButton = document.createElement('button');
+    const maintenanceButton = document.createElement('button');
     const controlNotice = document.createElement('p');
     const commandTitle = document.createElement('h4');
     const commandForm = document.createElement('form');
@@ -223,6 +277,7 @@ const renderServerList = (servers) => {
     disconnectRConButton.disabled = true;
     disconnectRConButton.hidden = !server.rconCompat;
     disconnectRConNotice.hidden = !server.rconCompat;
+    disconnectRConButton.title = '現在のRCON接続を手動で切断します。';
 
     disconnectRConButton.addEventListener('click', () => {
       const sent = sendWebSocketTell({
@@ -250,6 +305,40 @@ const renderServerList = (servers) => {
     restartButton.textContent = '再起動';
     restartButton.disabled = true;
 
+    maintenanceButton.type = 'button';
+    maintenanceButton.className = 'server-maintenance-toggle';
+    maintenanceButton.textContent = 'メンテナンス有効化';
+    maintenanceButton.disabled = true;
+
+    maintenanceButton.addEventListener('click', () => {
+      const cardInfo = serverCards.get(server.id);
+
+      if (
+        typeof cardInfo === 'undefined'
+        || cardInfo.lastServerStatus === null
+      ) {
+        return;
+      }
+
+      const enabled = !cardInfo.lastServerStatus.maintenance;
+      const sent = sendWebSocketTell({
+        type: 'maintenance-set',
+        serverId: server.id,
+        enabled: enabled,
+      });
+
+      if (!sent) {
+        cardInfo.controlNotice.textContent =
+          'メンテナンス設定を送信できませんでした。';
+        return;
+      }
+
+      maintenanceButton.disabled = true;
+      cardInfo.controlNotice.textContent = enabled
+        ? 'メンテナンス有効化を要求しました。'
+        : 'メンテナンス解除を要求しました。';
+    });
+
     startButton.addEventListener('click', () => {
       submitServerControl(server.id, 'start');
     });
@@ -262,7 +351,7 @@ const renderServerList = (servers) => {
       submitServerControl(server.id, 'restart');
     });
 
-    controlButtons.append(startButton, stopButton, restartButton);
+    controlButtons.append(startButton, stopButton, restartButton, maintenanceButton);
 
     commandTitle.textContent = 'コマンド送信';
     commandLabel.textContent = '改行区切りで複数入力できます。';
@@ -296,6 +385,9 @@ const renderServerList = (servers) => {
     });
 
     consoleTitle.textContent = 'コンソール';
+    consoleHeader.className = 'server-card__section-header server-card__detail-only';
+    consoleHeader.append(consoleTitle, disconnectRConButton);
+
     consoleView.className = 'server-console';
     consoleView.tabIndex = 0;
     consoleView.textContent = 'ログを取得中';
@@ -310,7 +402,20 @@ const renderServerList = (servers) => {
     controlNotice.className = 'server-card__notice';
     commandNotice.className = 'server-card__notice';
     disconnectRConNotice.className = 'server-card__notice';
+    rconError.classList.add('server-card__detail-only');
+    consoleTitle.classList.add('server-card__detail-only');
+    consoleView.classList.add('server-card__detail-only');
+    commandTitle.classList.add('server-card__detail-only');
+    commandForm.classList.add('server-card__detail-only');
+    disconnectRConButton.classList.add('server-card__detail-only');
+    disconnectRConNotice.classList.add('server-card__detail-only');
 
+    title.type = 'button';
+    title.className = 'server-card__title';
+
+    title.addEventListener('click', () => {
+      showServerDetail(server.id);
+    });
     title.textContent = server.name;
     serverId.textContent = `ID: ${server.id}`;
     rconCompatible.textContent = server.rconCompat
@@ -343,18 +448,18 @@ const renderServerList = (servers) => {
       controlTitle,
       controlButtons,
       controlNotice,
-      consoleTitle,
+      consoleHeader,
+      disconnectRConNotice,
       consoleView,
       commandTitle,
       commandForm,
-      disconnectRConButton,
-      disconnectRConNotice,
     );
 
     serverList.append(card);
 
     serverCards.set(server.id, {
       card,
+      name: server.name,
       rconAuth: rconAuth.value,
       rconCompatible: server.rconCompat,
       rconError,
@@ -368,6 +473,7 @@ const renderServerList = (servers) => {
       startButton,
       stopButton,
       restartButton,
+      maintenanceButton,
       controlNotice,
       lastServerStatus: null,
       commandNotice,
@@ -378,6 +484,12 @@ const renderServerList = (servers) => {
   });
 
   serverPanel.hidden = false;
+
+  if (selectedServerId !== null && serverCards.has(selectedServerId)) {
+    showServerDetail(selectedServerId);
+  } else {
+    showDashboard();
+  }
 };
 
 const updateServerStatus = (serverId, status) => {
@@ -499,6 +611,12 @@ const clearAuthenticatedView = () => {
   }
 
   authenticatedUser.textContent = '';
+
+  selectedServerId = null;
+  serverDetailContent.replaceChildren();
+  serverDetailView.hidden = true;
+  dashboardView.hidden = false;
+
   serverCards.clear();
   serverList.replaceChildren();
   serverPanel.hidden = true;
@@ -611,6 +729,37 @@ const connectWebSocket = async () => {
             cardInfo.commandNotice.textContent =
               errors[message.error] ?? 'コマンドは拒否されました。';
           }
+          return;
+        }
+        if (message.type === 'maintenance-submitted') {
+          const cardInfo = serverCards.get(message.serverId);
+
+          if (typeof cardInfo !== 'undefined') {
+            cardInfo.controlNotice.textContent = message.enabled
+              ? 'メンテナンスモードを有効化しました。'
+              : 'メンテナンスモードを解除しました。';
+          }
+
+          return;
+        }
+
+        if (message.type === 'maintenance-rejected') {
+          const cardInfo = serverCards.get(message.serverId);
+
+          if (typeof cardInfo !== 'undefined') {
+            cardInfo.controlNotice.textContent =
+              message.error === 'server_not_found'
+                ? '対象サーバーが見つかりません。'
+                : 'メンテナンス設定は拒否されました。';
+
+            if (cardInfo.lastServerStatus !== null) {
+              updateServerControlButtons(
+                cardInfo,
+                cardInfo.lastServerStatus,
+              );
+            }
+          }
+
           return;
         }
 

@@ -589,3 +589,108 @@ label {
 .server-status-row__value[data-state="enabled"] {
   color: #996800;
 }
+
+.server-maintenance-toggle {
+  border-color: #996800;
+  background: #996800;
+}
+
+.server-maintenance-toggle:hover:not(:disabled) {
+  border-color: #755000;
+  background: #755000;
+}
+
+.server-card__title {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #1d2327;
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.server-card__title:hover:not(:disabled) {
+  background: transparent;
+  color: #135e96;
+  text-decoration: underline;
+}
+
+#server-detail-back {
+  margin-bottom: 0.7rem;
+  border-color: #50575e;
+  background: #50575e;
+}
+
+#server-detail-back:hover:not(:disabled) {
+  border-color: #2c3338;
+  background: #2c3338;
+}
+
+#server-detail-content > .server-card {
+  width: 100%;
+}
+
+/* ダッシュボードは最低限の状態と操作だけを表示する。 */
+#dashboard-view .server-card__id,
+#dashboard-view .server-card__rcon-compatible,
+#dashboard-view .server-card__detail-only {
+  display: none;
+}
+
+#dashboard-view .server-status-row:not(
+  [data-status-key="server"]
+):not(
+  [data-status-key="maintenance"]
+) {
+  display: none;
+}
+
+#dashboard-view .server-status-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* 詳細画面では、カードを詳細用の見出しとして扱う。 */
+#server-detail-content .server-card__title {
+  cursor: default;
+  text-decoration: none;
+}
+
+#server-detail-content .server-card__title:hover:not(:disabled) {
+  color: #1d2327;
+  text-decoration: none;
+}
+
+.server-card__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.7rem;
+  padding-top: 1rem;
+  border-top: 1px solid #dcdcde;
+}
+
+.server-card__section-header h4 {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: #1d2327;
+  font-size: 1rem;
+}
+
+.server-card__section-header .server-card__detail-only {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+@media (max-width: 30rem) {
+  .server-card__section-header {
+    align-items: start;
+    flex-direction: column;
+  }
+}

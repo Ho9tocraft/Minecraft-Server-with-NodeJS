@@ -380,6 +380,14 @@ export abstract class MinecraftServerBase extends EventEmitter {
     this.requestFlag.reboot = true;
     this.stopServer();
   }
+  public setMaintenanceMode(enabled: boolean): void {
+    if (typeof enabled !== 'boolean') {
+      throw new TypeError('Maintenance Mode must be a boolean.');
+    }
+
+    this.mayMaintenance = enabled;
+    this.writeCurrentJSONProcStat();
+  }
   public executeConsoleCommands(input: string | readonly string[]): void {
     const { ERROR } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
     if (this.serverProc === null || this.runningStat !== 'RUNNING') {
