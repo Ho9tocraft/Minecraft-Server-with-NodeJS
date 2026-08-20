@@ -24,7 +24,14 @@ export const createWebApp = (sesMidw: RequestHandler, rAuth: Router, rPages: Rou
   app.set('trust proxy', trustProxy);
   // todo: この項目は、ビューキャッシュの無効化に使用(実運用時は…うーん、CSS/JS切り替えに備えて、あったほうがいいかも？)
   app.disable('view cache');
-  app.use(helmet());
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        'style-src': ["'self'", 'https://fonts.googleapis.com'],
+        'font-src': ["'self'", 'https://fonts.gstatic.com'],
+      },
+    },
+  }));
   app.use(sesMidw);
 
   app.use(express.json({

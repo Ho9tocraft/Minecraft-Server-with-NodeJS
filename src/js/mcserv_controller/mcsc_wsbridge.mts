@@ -11,6 +11,14 @@ import {
   type ServerScheduleUpdate,
 } from '../minecraft/servers.mjs';
 import { SSMan, type ServerScheduleSnapshot } from '../minecraft/scheduler.mjs';
+import {
+  readServerConfig,
+  writeServerConfig,
+  type ServerConfigChange,
+  ServerConfigReadError,
+  type ServerConfigReadErrorCode,
+  type ServerConfigSnapshot,
+} from './mcsc_server_config.mjs';
 import { type MCSCWebSocketAccess } from './mcsc_websocket.mjs';
 
 type MCSCWSServerErrorMsg = 'server_not_found' | 'server_not_running';
@@ -37,6 +45,8 @@ type MCSCWebSocketMessage =
   | Readonly<{ type: 'schedule-status', serverId: string, status: ServerScheduleSnapshot }>
   | Readonly<{ type: 'schedule-submitted', serverId: string, status: ServerScheduleSnapshot }>
   | Readonly<{ type: 'schedule-rejected', serverId: string, error: 'invalid_schedule' | MCSCWSServerErrorMsg }>
+  | Readonly<{ type: 'config-content', serverId: string, config: ServerConfigSnapshot }>
+  | Readonly<{ type: 'config-rejected', serverId: string, error: ServerConfigReadErrorCode | MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'command-submitted', serverId: string, commandCount: number }>
   | Readonly<{ type: 'command-rejected', serverId: string, error: 'invalid_message' | MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'request-rejected', error: 'invalid_message' }>
@@ -47,11 +57,15 @@ type MCSCWebSocketRConDisconnect = Readonly<{ type: 'rcon-disconnect', serverId:
 type MCSCWebSocketServerControl = Readonly<{ type: 'server-control', serverId: string, act: 'start' | 'stop' | 'restart' }>;
 type MCSCWebSocketMaintenanceSet = Readonly<{ type: 'maintenance-set', serverId: string, enabled: boolean }>;
 type MCSCWebSocketScheduleSet = Readonly<{ type: 'schedule-set', serverId: string, schedule: ServerScheduleUpdate }>;
+type MCSCWebSocketConfigGet = Readonly<{ type: 'config-get', serverId: string }>;
+type MCSCWebSocketConfigSet = Readonly<{ type: 'config-set', serverId: string, revision: string, changes: readonly ServerConfigChange[] }>;
 type MCSCWebSocketIncomingTell =
   | MCSCWebSocketCmdBatch
   | MCSCWebSocketRConDisconnect
   | MCSCWebSocketMaintenanceSet
   | MCSCWebSocketScheduleSet
+  | MCSCWebSocketConfigGet
+  | MCSCWebSocketConfigSet
   | MCSCWebSocketServerControl;
 type HTTPErrorCodeText = // めんどくせーのでここでエラーコード列挙させろォ！
   | '400 Bad Request'
@@ -141,7 +155,7 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
   if (typeof parsedMsg !== 'object' || parsedMsg === null || Array.isArray(parsedMsg)) return null;
 
   const msg = parsedMsg as Record<string, unknown>;
-  const { action: act, cmds, enabled, schedule: cron, serverId, type } = msg;
+  const { action: act, changes, cmds, enabled, revision, schedule: cron, serverId, type } = msg;
 
   if (typeof serverId !== 'string' || serverId.length === 0 || serverId.length > 128) return null;
 
@@ -173,6 +187,23 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
       }),
     });
   }
+  if (type === 'config-get') return Object.freeze({
+    type: 'config-get',
+    serverId: serverId,
+  });
+  if (type === 'config-set' && typeof revision === 'string' && /^[a-f0-9]{64}$/.test(revision)
+    && Array.isArray(changes) && changes.length > 0 && changes.length <= 64
+    && changes.every((change) => typeof change === 'object' && change !== null
+      && typeof change.key === 'string' && change.key.length > 0 && change.key.length <= 128
+      && typeof change.value === 'string' && change.value.length <= 1024)) {
+    return Object.freeze({
+      type: 'config-set', serverId, revision,
+      changes: Object.freeze(changes.map((change) => Object.freeze({
+        key: (change as ServerConfigChange).key,
+        value: (change as ServerConfigChange).value,
+      }))),
+    });
+  }
   if (type === 'server-control' && (act === 'start' || act === 'stop' || act === 'restart')) return Object.freeze({
     type: 'server-control',
     serverId: serverId,
@@ -187,6 +218,60 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
     cmds: Object.freeze([...cmds])
   });
 }
+
+const handleConfigGet = async (
+  socket: WebSocket,
+  configReq: MCSCWebSocketConfigGet,
+  servers: readonly MinecraftServerBase[],
+): Promise<void> => {
+  const targetServer = servers.find((server) => server.srvId === configReq.serverId);
+
+  if (typeof targetServer === 'undefined') {
+    sendMessage(socket, {
+      type: 'config-rejected',
+      serverId: configReq.serverId,
+      error: 'server_not_found',
+    });
+    return;
+  }
+
+  try {
+    const config = await readServerConfig(targetServer);
+
+    sendMessage(socket, {
+      type: 'config-content',
+      serverId: targetServer.srvId,
+      config,
+    });
+  } catch (error) {
+    const errorCode = error instanceof ServerConfigReadError
+      ? error.code
+      : 'config_read_failed';
+
+    sendMessage(socket, {
+      type: 'config-rejected',
+      serverId: targetServer.srvId,
+      error: errorCode,
+    });
+  }
+};
+
+const handleConfigSet = async (socket: WebSocket, request: MCSCWebSocketConfigSet, servers: readonly MinecraftServerBase[]): Promise<void> => {
+  const targetServer = servers.find((server) => server.srvId === request.serverId);
+  if (typeof targetServer === 'undefined') {
+    sendMessage(socket, { type: 'config-rejected', serverId: request.serverId, error: 'server_not_found' });
+    return;
+  }
+  try {
+    const config = await writeServerConfig(targetServer, request.revision, request.changes);
+    sendMessage(socket, { type: 'config-content', serverId: targetServer.srvId, config });
+  } catch (error) {
+    sendMessage(socket, {
+      type: 'config-rejected', serverId: targetServer.srvId,
+      error: error instanceof ServerConfigReadError ? error.code : 'config_read_failed',
+    });
+  }
+};
 
 const handleCmdBatch = (socket: WebSocket, cmdBatch: MCSCWebSocketCmdBatch, servers: readonly MinecraftServerBase[]): void => {
   const tgtServ = servers.find((server) => { return server.srvId === cmdBatch.serverId; });
@@ -383,6 +468,12 @@ const handleIncomingTell = (socket: WebSocket, data: WebSocket.RawData, isBin: b
       break;
     case 'schedule-set':
       handleScheduleSet(socket, incomingTell, servers);
+      break;
+    case 'config-get':
+      void handleConfigGet(socket, incomingTell, servers);
+      break;
+    case 'config-set':
+      void handleConfigSet(socket, incomingTell, servers);
       break;
     case 'server-control':
       handleServControl(socket, incomingTell, servers);

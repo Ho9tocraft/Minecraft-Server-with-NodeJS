@@ -41,10 +41,19 @@ export type RunningStatus = 'UNDEFINED' | 'STOPPED' | 'STARTING' | 'RUNNING' | '
  */
 export type RConConnectionState = 'DISCONNECTED' | 'CONNECTING' | 'AUTHENTICATING' | 'CONNECTED' | 'FBMODE' | 'FAILED' | 'TIMEOUT';
 export type LogSource = 'stdout' | 'stderr' | 'rcon';
-export type ServerConsoleMessage = Readonly<{ at: string, ts: number, source: LogSource, message: string, truncated: boolean }>;
+export type ConsoleLogLevel = 'DEBUG' | 'INFO' | 'STDOUT' | 'WARN' | 'ERROR' | 'FATAL';
+export type ServerConsoleMessage = Readonly<{ at: string, ts: number, source: LogSource, level: ConsoleLogLevel, message: string, truncated: boolean }>;
+export type ServerConfigFormat = 'properties' | 'yaml' | 'toml';
+export type ServerConfigFileInfo = Readonly<{ fileName: 'server.properties' | 'config.yml' | 'velocity.toml', format: ServerConfigFormat }>;
 export type RConStatusSnapshot = Readonly<{ status: RConConnectionState, authed: boolean, fallbacked: boolean, lastError: string | null }>;
 export type ServerStatusSnapshot = Readonly<{ status: RunningStatus, maintenance: boolean, processAlive: boolean }>;
-export type ServerMetadata = Readonly<{ id: string, name: string, rconCompat: boolean }>;
+export type ServerMetadata = Readonly<{
+  id: string,
+  name: string,
+  rconCompat: boolean,
+  isProxy: boolean,
+  linkedServerIds: readonly string[],
+}>;
 export type ScheduleOverrideInput = Readonly<{ useOverride: boolean, motd: string, exec: string }>;
 export type ServerScheduleUpdate = Readonly<{ start: string, reboot: ScheduleOverrideInput, shutdown: ScheduleOverrideInput }>;
 
@@ -520,8 +529,14 @@ export abstract class MinecraftServerBase extends EventEmitter {
       id: this.srvId,
       name: this.srvName,
       rconCompat: this.rconCompatible,
+      isProxy: false,
+      linkedServerIds: Object.freeze([]),
     });
   };
+  /** WebUIが編集を許可する、サーバーディレクトリ直下の設定ファイルを返す。 */
+  public getServerConfigFile(): ServerConfigFileInfo {
+    return Object.freeze({ fileName: 'server.properties', format: 'properties' });
+  }
 
   // protected:
   /**
@@ -581,10 +596,19 @@ export abstract class MinecraftServerBase extends EventEmitter {
     const { MaxHistoryRecord, MaxMessageChars } = ConsoleDefinition;
     const truncated = rawMsg.length > MaxMessageChars;
     const message = truncated ? `${rawMsg.slice(0, MaxMessageChars)}...` : rawMsg;
+    // [INFO]、[12:34:56 INFO]、[Server thread/INFO] の各形式を受け付ける。
+    const logLevelMatch = message.match(/\[(?:[^\]\r\n]*[\/\s])?(DEBUG|INFO|STDOUT|WARN|ERROR|FATAL)\]/i);
+    const matchedLogLevel = logLevelMatch?.[1];
+    const hasStderrMarker = /\[STDERR\]/i.test(message);
+    const level: ConsoleLogLevel = source === 'stderr' || hasStderrMarker
+      ? 'ERROR'
+      : typeof matchedLogLevel !== 'string'
+        ? 'STDOUT'
+        : matchedLogLevel.toUpperCase() as ConsoleLogLevel;
     const ts = Date.now();
     const record: ServerConsoleMessage = Object.freeze({
       at: format(new Date(ts), 'yyyy/MM/dd HH:mm:ss.SSS'),
-      ts, source, message, truncated
+      ts, source, level, message, truncated
     });
 
     if (this.consoleHistory.length >= MaxHistoryRecord) this.consoleHistory.shift();
@@ -1250,70 +1274,28 @@ export class MinecraftServer extends MinecraftServerBase {
 };
 
 export class VelocityServer extends MinecraftServerBase {
-  protected socketedServerStat: Map<string, { stat: boolean, reason: string }>;
   constructor(serverJSON: MinecraftServerData) {
     super(serverJSON);
     const { proxySocketedSrv } = serverJSON.work;
     this.stopCmd = 'end';
     this.proxySocketSrv = proxySocketedSrv || [];
-    this.socketedServerStat = new Map();
   }
-  public override observeServer(): void {
-    this.runningResult.rObserve = true;
-    const { DEBUG_MODE, MCSERV_CONTROLLER_ENV } = globalThis;
-    const { ERROR, WARN, LOG } = MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
-    if (this.serverProc === null || this.runningStat !== 'RUNNING') {
-      this.runningResult.rObserve = false;
-      return;
-    }
-    if (!(typeof this.serverProc.exitCode === 'undefined' || this.serverProc.exitCode === null)) {
-      this.runningResult.rObserve = false;
-      return;
-    }
-    if (DEBUG_MODE) emitLog(WARN, 'DEBUG MODE enabled. Skipping Result-Based Process Stopping.', { optStr: '[PROXY-SRV]' });
-    this.checkProxySocketedServerStatus();
-    this.socketedServerStat.forEach((value, key) => {
-      const { stat: isOnline, reason: stat } = value;
-      emitLog(LOG, `Socketed Server ${key} Status: ${stat}`, { optStr: '[PROXY-SRV]' });
-      if (this.runningResult.rObserve && !isOnline) this.runningResult.rObserve = false;
+  public override getServMDat(): ServerMetadata {
+    return Object.freeze({
+      ...super.getServMDat(),
+      isProxy: true,
+      linkedServerIds: Object.freeze([...(this.proxySocketSrv ?? [])]),
     });
-    if (!this.runningResult.rObserve) {
-      emitLog(ERROR, 'Some of the socketed server is not Launched.', { optStr: '[PROXY-SRV]' });
-      if (!DEBUG_MODE) {
-        emitLog(ERROR, 'Stop phase started.', { optStr: '[PROXY-SRV]' });
-        this.stopServer();
-      }
-    }
+  }
+  public override getServerConfigFile(): ServerConfigFileInfo {
+    const isVelocity = /velocity/i.test(this.currentJSONStat.work.jarFile);
+
+    return isVelocity
+      ? Object.freeze({ fileName: 'velocity.toml', format: 'toml' })
+      : Object.freeze({ fileName: 'config.yml', format: 'yaml' });
   }
   protected override instantRCONCommand(cmd: string): void {
     this.instantStdinCommand(cmd);
-  }
-  protected checkProxySocketedServerStatus(): void {
-    const { LOGGING_PREFIXES, SERVER_INSTANCES } = globalThis.MCSERV_CONTROLLER_ENV;
-    const { ERROR, WARN } = LOGGING_PREFIXES;
-    let tgtServerInstances: MinecraftServerBase[] = [];
-    this.proxySocketSrv?.forEach((tgtSrvId) => {
-      const { success, result } = searchServerInstance(tgtSrvId);
-      if (success) {
-        const tgtSrv = SERVER_INSTANCES.at(result.idx);
-        if (typeof tgtSrv === 'undefined') {
-          emitLog(WARN, 'Socketed Server not matched.', { optStr: '[PROXY-SRV]' });
-          return;
-        }
-        tgtServerInstances.push(tgtSrv);
-      }
-    });
-    if (tgtServerInstances.length === 0) {
-      emitLog(ERROR, 'Matched Socketed Server nothing.');
-      this.runningResult.rObserve = false;
-      return;
-    }
-    tgtServerInstances.forEach((srvInst) => {
-      srvInst.observeServer();
-      const { srvId, runningResult } = srvInst;
-      const observe = runningResult.rObserve;
-      this.socketedServerStat.set(srvId, { stat: observe, reason: `Server is ${observe ? 'online' : 'offline'}` });
-    });
   }
 }
 

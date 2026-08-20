@@ -61,10 +61,12 @@ a:focus-visible {
 }
 
 button:disabled {
-  border-color: #a7aaad;
-  background: #a7aaad;
-  color: #f6f7f7;
+  border-color: #50575e;
+  background: #50575e;
+  color: #c3c4c7;
   cursor: not-allowed;
+  opacity: 0.62;
+  box-shadow: inset 0 0 0 1px #3c434a;
 }
 
 input,
@@ -75,6 +77,58 @@ textarea {
   border-radius: 0.2rem;
   background: #fff;
   color: #2c3338;
+}
+
+.material-icons {
+  font-size: 1.15em;
+  line-height: 1;
+  vertical-align: -0.15em;
+}
+
+.button-with-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+input[type="checkbox"] {
+  appearance: none;
+  width: 2.65rem;
+  height: 1.4rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #8c8f94;
+  border-radius: 999px;
+  background: #8c8f94;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+input[type="checkbox"]::after {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  margin: 0.12rem;
+  border-radius: 50%;
+  background: #fff;
+  content: '';
+  transition: transform 120ms ease;
+}
+
+input[type="checkbox"]:checked {
+  border-color: #2271b1;
+  background: #2271b1;
+}
+
+input[type="checkbox"]:checked::after {
+  transform: translateX(1.22rem);
+}
+
+input[type="checkbox"]:disabled {
+  border-color: #c3c4c7;
+  background: #c3c4c7;
+  cursor: not-allowed;
 }
 
 textarea {
@@ -342,6 +396,10 @@ label {
   gap: 0.5rem;
 }
 
+.server-controls .button-with-icon {
+  justify-content: flex-start;
+}
+
 .server-controls button:nth-child(2) {
   border-color: #b32d2e;
   background: #b32d2e;
@@ -353,7 +411,7 @@ label {
 }
 
 .server-console {
-  max-height: 24rem;
+  height: 24rem;
   margin-bottom: 0;
   padding: 0.85rem;
   overflow: auto;
@@ -366,6 +424,35 @@ label {
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.server-console__line {
+  display: block;
+  min-height: 1.5em;
+}
+
+.server-console__line--debug {
+  color: #00a32a;
+}
+
+.server-console__line--info,
+.server-console__line--stdout {
+  color: #f0f0f1;
+}
+
+.server-console__line--warn {
+  color: #dba617;
+}
+
+.server-console__line--error {
+  color: #ff6b6b;
+}
+
+.server-console__line--fatal {
+  margin-inline: -0.25rem;
+  padding-inline: 0.25rem;
+  background: #0b0c0d;
+  color: #ff6b6b;
 }
 
 .server-card form {
@@ -481,7 +568,7 @@ label {
   }
 
   .server-console {
-    max-height: 18rem;
+    height: 18rem;
   }
 
   .admin-footer {
@@ -509,7 +596,11 @@ label {
 }
 
 .server-card__rcon-compatible {
-  margin-left: 0.7rem;
+  margin-left: 1.2em;
+}
+
+.server-card__title + .server-card__id {
+  margin-left: 1.2em;
 }
 
 .server-status-grid {
@@ -527,6 +618,14 @@ label {
   min-width: 0;
   padding: 0.8rem 1rem;
   background: #fff;
+}
+
+.server-status-row--linked {
+  gap: 0.15rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0 0;
+  border-top: 1px solid #dcdcde;
+  background: transparent;
 }
 
 .server-status-row__label {
@@ -600,7 +699,8 @@ label {
 
 .server-status-row__value[data-state="FBMODE"],
 .server-status-row__value[data-state="TIMEOUT"],
-.server-status-row__value[data-state="enabled"] {
+.server-status-row__value[data-state="enabled"],
+.server-status-row__value[data-state="partial"] {
   color: #996800;
 }
 
@@ -659,12 +759,59 @@ label {
   [data-status-key="server"]
 ):not(
   [data-status-key="maintenance"]
+):not(
+  [data-status-key="linked"]
 ) {
   display: none;
 }
 
 #dashboard-view .server-status-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#dashboard-view .server-card {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(15rem, 2.5fr);
+  align-items: stretch;
+}
+
+#dashboard-view .server-card__header,
+#dashboard-view .server-card__notice {
+  grid-column: 1 / -1;
+}
+
+#dashboard-view .server-status-grid {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+#dashboard-view .server-card__control-title {
+  display: none;
+}
+
+#dashboard-view .server-controls {
+  display: grid;
+  grid-column: 2;
+  grid-row: 2;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: center;
+}
+
+#dashboard-view .server-card__notice {
+  grid-row: 3;
+}
+
+@media (max-width: 48rem) {
+  #dashboard-view .server-card {
+    grid-template-columns: 1fr;
+  }
+
+  #dashboard-view .server-status-grid,
+  #dashboard-view .server-controls,
+  #dashboard-view .server-card__notice {
+    grid-column: 1;
+    grid-row: auto;
+  }
 }
 
 /* 詳細画面では、カードを詳細用の見出しとして扱う。 */
@@ -700,6 +847,114 @@ label {
 .server-card__section-header .server-card__detail-only {
   flex: 0 0 auto;
   margin: 0;
+}
+
+.server-linked-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+  padding: 0;
+  list-style: none;
+}
+
+.server-linked-list li {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.8fr) minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid #dcdcde;
+  background: #f6f7f7;
+}
+
+.server-linked-list span {
+  overflow-wrap: anywhere;
+  color: #50575e;
+  font-size: 0.85rem;
+}
+
+.server-linked-list span[data-state="RUNNING"] {
+  color: #008a20;
+}
+
+.server-linked-list span[data-state="STARTING"] {
+  color: #996800;
+}
+
+.server-linked-list span[data-state="CRASHED"],
+.server-linked-list span[data-state="DEPLETED"],
+.server-linked-list span[data-state="FAILED"] {
+  color: #b32d2e;
+}
+
+.server-config-meta {
+  margin-top: 0;
+  margin-bottom: 0.7rem;
+  color: #50575e;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.server-config-fields {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.server-config-field {
+  display: grid;
+  grid-template-columns: minmax(13rem, 0.9fr) minmax(0, 1.1fr);
+  gap: 0.4rem 1rem;
+  align-items: center;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid #dcdcde;
+  background: #f6f7f7;
+}
+
+.server-config-field dt,
+.server-config-field dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.server-config-field__key {
+  display: block;
+  margin-top: 0.2rem;
+  color: #50575e;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.server-config-field dd > input:not([type="checkbox"]),
+.server-config-field dd > select {
+  width: 100%;
+}
+
+.server-config-field dd > output {
+  display: block;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #c3c4c7;
+  background: #fff;
+}
+
+.server-config-field__notice {
+  margin: 0.4rem 0 0;
+  color: #996800;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 40rem) {
+  .server-config-field {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 40rem) {
+  .server-linked-list li {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 30rem) {
@@ -824,9 +1079,7 @@ label {
 }
 
 .server-schedule-editor input[type="checkbox"] {
-  width: auto;
-  margin: 0;
-  padding: 0;
+  flex: 0 0 auto;
 }
 
 .server-schedule-editor fieldset > label:first-of-type {

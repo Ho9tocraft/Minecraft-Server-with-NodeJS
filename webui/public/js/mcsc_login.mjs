@@ -66,9 +66,23 @@ const setNotice = (message) => {
   notice.textContent = message;
 };
 
+/** Material Icons付きのボタン内容を設定する。アイコン名はGoogle Fontsのリガチャ名を使う。 */
+const setButtonContent = (button, label, iconName) => {
+  const icon = document.createElement('span');
+
+  icon.className = 'material-icons';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = iconName;
+  button.classList.add('button-with-icon');
+  button.replaceChildren(icon, document.createTextNode(label));
+};
+
 let activeWebSocket = null;
 const serverCards = new Map();
 const MaxConsoleEntries = 400;
+const ConsoleLogLevels = new Set([
+  'DEBUG', 'INFO', 'STDOUT', 'WARN', 'ERROR', 'FATAL',
+]);
 let webSocketConnecting = false;
 let selectedServerId = null;
 
@@ -188,19 +202,21 @@ const createStatusRow = (labelText, statusKey) => {
   return { row, value };
 };
 
-/** 受信したサーバー状態に応じて開始・停止・再起動操作の可否を更新する。 */
+/** 受信したサーバー状態に応じて起動・停止・再起動操作の可否を更新する。 */
 const updateServerControlButtons = (cardInfo, status) => {
   const canStart = !status.processAlive && !(
     status.status === 'DEPLETED' && status.maintenance
   );
 
   cardInfo.startButton.disabled = !canStart;
-  cardInfo.stopButton.disabled = status.status !== 'RUNNING';
+  cardInfo.stopButton.disabled = !status.processAlive;
   cardInfo.restartButton.disabled = status.status !== 'RUNNING';
   cardInfo.maintenanceButton.disabled = false;
-  cardInfo.maintenanceButton.textContent = status.maintenance
-    ? 'メンテナンス解除'
-    : 'メンテナンス有効化';
+  setButtonContent(
+    cardInfo.maintenanceButton,
+    status.maintenance ? 'メンテナンス解除' : 'メンテナンス有効化',
+    'construction',
+  );
 };
 
 /** サーバー制御要求を送り、応答受信まで操作ボタンの連打を防止する。 */
@@ -226,7 +242,7 @@ const submitServerControl = (serverId, action) => {
   cardInfo.restartButton.disabled = true;
 
   const actionNames = {
-    start: '開始',
+    start: '起動',
     stop: '停止',
     restart: '再起動',
   };
@@ -261,6 +277,192 @@ const setScheduleOverrideInputsDisabled = (
   execInput.disabled = disabled;
 };
 
+/** Velocityの関連先一覧を通常のサーバー状態から再計算し、表示だけを更新する。 */
+const updateProxyLinkedServerStatuses = () => {
+  serverCards.forEach((cardInfo) => {
+    if (!cardInfo.isProxy) return;
+
+    const linkedElements = [];
+    let runningCount = 0;
+
+    for (const linkedServerId of cardInfo.linkedServerIds) {
+      const linkedCardInfo = serverCards.get(linkedServerId);
+      const item = document.createElement('li');
+      const name = document.createElement('strong');
+      const detail = document.createElement('span');
+
+      if (typeof linkedCardInfo === 'undefined') {
+        name.textContent = linkedServerId;
+        detail.textContent = '設定不備: サーバー未登録';
+        detail.dataset.state = 'FAILED';
+      } else if (linkedCardInfo.lastServerStatus === null) {
+        name.textContent = linkedCardInfo.name;
+        detail.textContent = `${linkedServerId}: 状態を取得中`;
+      } else {
+        const linkedStatus = linkedCardInfo.lastServerStatus;
+
+        if (linkedStatus.status === 'RUNNING') runningCount += 1;
+
+        name.textContent = linkedCardInfo.name;
+        detail.textContent = `${linkedServerId}: ${linkedStatus.status} / ${
+          linkedStatus.processAlive ? 'プロセス稼働中' : 'プロセス停止中'
+        }`;
+        detail.dataset.state = linkedStatus.status;
+      }
+
+      item.append(name, detail);
+      linkedElements.push(item);
+    }
+
+    if (cardInfo.linkedServerIds.length === 0) {
+      cardInfo.linkedStatus.textContent = '設定なし';
+      cardInfo.linkedStatus.dataset.state = 'disabled';
+    } else {
+      cardInfo.linkedStatus.textContent =
+        `${runningCount} / ${cardInfo.linkedServerIds.length} 稼働`;
+      cardInfo.linkedStatus.dataset.state = runningCount === cardInfo.linkedServerIds.length
+        ? 'alive'
+        : runningCount === 0
+          ? 'FAILED'
+          : 'partial';
+    }
+
+    cardInfo.linkedList.replaceChildren(...linkedElements);
+  });
+};
+
+/** 許可済み設定フィールドを詳細画面の表示専用コントロールへ描画する。 */
+const renderServerConfig = (serverId, config) => {
+  const cardInfo = serverCards.get(serverId);
+
+  if (
+    typeof cardInfo === 'undefined'
+    || typeof config !== 'object'
+    || config === null
+    || typeof config.file !== 'object'
+    || config.file === null
+    || typeof config.file.fileName !== 'string'
+    || typeof config.file.format !== 'string'
+    || typeof config.revision !== 'string'
+    || typeof config.bytes !== 'number'
+    || !Array.isArray(config.fields)
+  ) {
+    return;
+  }
+
+  const fields = [];
+  const wasSavePending = cardInfo.configSavePending;
+  const canEdit = cardInfo.lastServerStatus !== null
+    && !cardInfo.lastServerStatus.processAlive;
+
+  for (const field of config.fields) {
+    if (
+      typeof field !== 'object'
+      || field === null
+      || typeof field.key !== 'string'
+      || field.key.toLowerCase() === 'rcon.password'
+      || typeof field.value !== 'string'
+      || !['text', 'boolean', 'select', 'readonly'].includes(field.mode)
+    ) {
+      continue;
+    }
+
+    const row = document.createElement('div');
+    const key = document.createElement('dt');
+    const configKey = document.createElement('span');
+    const value = document.createElement('dd');
+
+    row.className = 'server-config-field';
+    key.textContent = typeof field.label === 'string' && field.label.length > 0
+      ? field.label
+      : field.key;
+    configKey.className = 'server-config-field__key';
+    configKey.textContent = field.key;
+    key.append(configKey);
+
+    if (field.mode === 'boolean') {
+      const input = document.createElement('input');
+
+      input.type = 'checkbox';
+      input.setAttribute('aria-label', field.key);
+      input.checked = field.value.toLowerCase() === 'true';
+      input.disabled = !canEdit;
+      input.dataset.configKey = field.key;
+      input.dataset.configValue = input.checked ? 'true' : 'false';
+      value.append(input);
+    } else if (field.mode === 'select') {
+      const select = document.createElement('select');
+      const options = Array.isArray(field.options) ? field.options : [];
+
+      for (const optionValue of options) {
+        if (typeof optionValue !== 'string') continue;
+
+        const option = document.createElement('option');
+        option.value = optionValue;
+        option.textContent = optionValue;
+        option.selected = optionValue === field.value;
+        select.append(option);
+      }
+
+      select.disabled = !canEdit;
+      select.dataset.configKey = field.key;
+      select.dataset.configValue = field.value;
+      value.append(select);
+    } else if (field.mode === 'readonly') {
+      const output = document.createElement('output');
+      output.textContent = field.value;
+      value.append(output);
+    } else {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = field.value;
+      input.readOnly = !canEdit;
+      input.dataset.configKey = field.key;
+      input.dataset.configValue = field.value;
+      value.append(input);
+    }
+
+    if (typeof field.notice === 'string' && field.notice.length > 0) {
+      const fieldNotice = document.createElement('p');
+      fieldNotice.className = 'server-config-field__notice';
+      fieldNotice.textContent = field.notice;
+      value.append(fieldNotice);
+    }
+
+    row.append(key, value);
+    fields.push(row);
+  }
+
+  cardInfo.configMeta.textContent =
+    `${config.file.fileName} (${config.file.format}, ${config.bytes} bytes)`;
+  cardInfo.configFields.replaceChildren(...fields);
+  cardInfo.configFields.hidden = false;
+  cardInfo.configRevision = config.revision;
+  cardInfo.configSaveButton.disabled = !canEdit;
+  cardInfo.configSavePending = false;
+  cardInfo.configNotice.textContent =
+    wasSavePending
+      ? '設定を保存しました。次回起動時から反映されます。'
+      : canEdit
+      ? '編集後に保存すると、次回起動時から設定が反映されます。'
+      : 'サーバー停止中のみ設定を編集・保存できます。';
+};
+
+/** サーバー状態変化に合わせ、既読の設定フィールドの編集可否を更新する。 */
+const updateServerConfigEditability = (cardInfo, status) => {
+  const canEdit = !status.processAlive && cardInfo.configRevision !== null;
+
+  for (const control of cardInfo.configFields.querySelectorAll('[data-config-key]')) {
+    if (control instanceof HTMLInputElement && control.type === 'text') {
+      control.readOnly = !canEdit;
+    } else if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement) {
+      control.disabled = !canEdit;
+    }
+  }
+
+  cardInfo.configSaveButton.disabled = !canEdit;
+};
+
 /** サーバー一覧メタデータから、ダッシュボード兼詳細画面用のカード群を再構築する。 */
 const renderServerList = (servers) => {
   serverCards.clear();
@@ -273,6 +475,9 @@ const renderServerList = (servers) => {
       || typeof server.id !== 'string'
       || typeof server.name !== 'string'
       || typeof server.rconCompat !== 'boolean'
+      || typeof server.isProxy !== 'boolean'
+      || !Array.isArray(server.linkedServerIds)
+      || !server.linkedServerIds.every((serverId) => typeof serverId === 'string')
     ) {
       return;
     }
@@ -289,6 +494,7 @@ const renderServerList = (servers) => {
     const rconStatus = createStatusRow('RCON 状態', 'rcon-status');
     const rconAuth = createStatusRow('RCON 認証', 'rcon-auth');
     const rconFallback = createStatusRow('stdin フォールバック', 'rcon-fallback');
+    const linkedStatus = createStatusRow('連動先', 'linked');
     const rconError = document.createElement('p');
     const consoleTitle = document.createElement('h4');
     const consoleHeader = document.createElement('div');
@@ -300,6 +506,16 @@ const renderServerList = (servers) => {
     const restartButton = document.createElement('button');
     const maintenanceButton = document.createElement('button');
     const controlNotice = document.createElement('p');
+    const linkedHeader = document.createElement('div');
+    const linkedTitle = document.createElement('h4');
+    const linkedList = document.createElement('ul');
+    const configHeader = document.createElement('div');
+    const configTitle = document.createElement('h4');
+    const configReloadButton = document.createElement('button');
+    const configSaveButton = document.createElement('button');
+    const configMeta = document.createElement('p');
+    const configFields = document.createElement('dl');
+    const configNotice = document.createElement('p');
     const scheduleTitle = document.createElement('h4');
     const scheduleList = document.createElement('dl');
     const scheduleHeader = document.createElement('div');
@@ -337,7 +553,7 @@ const renderServerList = (servers) => {
     const disconnectRConNotice = document.createElement('p');
 
     disconnectRConButton.type = 'button';
-    disconnectRConButton.textContent = 'RCON 切断';
+    setButtonContent(disconnectRConButton, 'RCON 切断', 'link_off');
     disconnectRConButton.disabled = true;
     disconnectRConButton.hidden = !server.rconCompat;
     disconnectRConNotice.hidden = !server.rconCompat;
@@ -355,23 +571,24 @@ const renderServerList = (servers) => {
     });
 
     controlTitle.textContent = 'サーバー操作';
+    controlTitle.className = 'server-card__control-title';
     controlButtons.className = 'server-controls';
 
     startButton.type = 'button';
-    startButton.textContent = '開始';
+    setButtonContent(startButton, '起動', 'play_arrow');
     startButton.disabled = true;
 
     stopButton.type = 'button';
-    stopButton.textContent = '停止';
+    setButtonContent(stopButton, '停止', 'stop');
     stopButton.disabled = true;
 
     restartButton.type = 'button';
-    restartButton.textContent = '再起動';
+    setButtonContent(restartButton, '再起動', 'autorenew');
     restartButton.disabled = true;
 
     maintenanceButton.type = 'button';
     maintenanceButton.className = 'server-maintenance-toggle';
-    maintenanceButton.textContent = 'メンテナンス有効化';
+    setButtonContent(maintenanceButton, 'メンテナンス有効化', 'construction');
     maintenanceButton.disabled = true;
 
     maintenanceButton.addEventListener('click', () => {
@@ -423,7 +640,7 @@ const renderServerList = (servers) => {
     scheduleHeader.className = 'server-card__section-header server-card__detail-only';
 
     scheduleEditButton.type = 'button';
-    scheduleEditButton.textContent = '編集';
+    setButtonContent(scheduleEditButton, '編集', 'edit');
     scheduleEditButton.className = 'server-schedule-edit';
 
     scheduleEditButton.addEventListener('click', () => {
@@ -581,10 +798,10 @@ const renderServerList = (servers) => {
     shutdownFieldset.append(shutdownLegend, shutdownUseGlobalLabel, shutdownMotdLabel, shutdownExecLabel);
 
     scheduleSaveButton.type = 'submit';
-    scheduleSaveButton.textContent = '保存';
+    setButtonContent(scheduleSaveButton, '保存', 'save');
 
     scheduleCancelButton.type = 'button';
-    scheduleCancelButton.textContent = 'キャンセル';
+    setButtonContent(scheduleCancelButton, 'キャンセル', 'cancel');
 
     scheduleActions.className = 'server-schedule-editor__actions';
     scheduleNotice.className = 'server-card__notice';
@@ -600,7 +817,7 @@ const renderServerList = (servers) => {
     commandInput.placeholder = '例:\nsay Hello\nlist';
 
     commandSubmit.type = 'submit';
-    commandSubmit.textContent = '送信 (Ctrl+Enter)';
+    setButtonContent(commandSubmit, '送信 (Ctrl+Enter)', 'send');
     commandSubmit.disabled = true;
 
     commandForm.append(commandLabel, commandInput, commandSubmit, commandNotice);
@@ -642,6 +859,61 @@ const renderServerList = (servers) => {
     commandNotice.className = 'server-card__notice';
     disconnectRConNotice.className = 'server-card__notice';
     rconError.classList.add('server-card__detail-only');
+    linkedHeader.className = 'server-card__section-header server-card__detail-only';
+    linkedTitle.textContent = '連動先サーバー状態';
+    linkedHeader.append(linkedTitle);
+    linkedList.className = 'server-linked-list server-card__detail-only';
+    linkedHeader.hidden = !server.isProxy;
+    linkedList.hidden = !server.isProxy;
+    configHeader.className = 'server-card__section-header server-card__detail-only';
+    configTitle.textContent = 'サーバー設定';
+    configReloadButton.type = 'button';
+    setButtonContent(configReloadButton, '設定を読み込む', 'refresh');
+    configReloadButton.addEventListener('click', () => {
+      const sent = sendWebSocketTell({ type: 'config-get', serverId: server.id });
+      configNotice.textContent = sent
+        ? '設定を読み込んでいます。'
+        : '設定を読み込めませんでした。';
+    });
+    configSaveButton.type = 'button';
+    setButtonContent(configSaveButton, '保存', 'save');
+    configSaveButton.disabled = true;
+    configSaveButton.addEventListener('click', () => {
+      const cardInfo = serverCards.get(server.id);
+      if (typeof cardInfo === 'undefined' || cardInfo.configRevision === null) return;
+
+      const changes = [];
+      for (const control of configFields.querySelectorAll('[data-config-key]')) {
+        if (!(control instanceof HTMLInputElement || control instanceof HTMLSelectElement)) continue;
+        const key = control.dataset.configKey;
+        const previousValue = control.dataset.configValue;
+        if (typeof key !== 'string' || typeof previousValue !== 'string') continue;
+        const value = control instanceof HTMLInputElement && control.type === 'checkbox'
+          ? control.checked ? 'true' : 'false'
+          : control.value;
+        if (value !== previousValue) changes.push({ key, value });
+      }
+      if (changes.length === 0) {
+        configNotice.textContent = '変更された設定はありません。';
+        return;
+      }
+      const sent = sendWebSocketTell({
+        type: 'config-set', serverId: server.id,
+        revision: cardInfo.configRevision, changes,
+      });
+      if (!sent) {
+        configNotice.textContent = '設定を保存できませんでした。';
+        return;
+      }
+      cardInfo.configSavePending = true;
+      configSaveButton.disabled = true;
+      configNotice.textContent = '設定を保存しています。';
+    });
+    configHeader.append(configTitle, configReloadButton, configSaveButton);
+    configMeta.className = 'server-config-meta server-card__detail-only';
+    configFields.className = 'server-config-fields server-card__detail-only';
+    configFields.hidden = true;
+    configNotice.className = 'server-card__notice server-card__detail-only';
     consoleTitle.classList.add('server-card__detail-only');
     consoleView.classList.add('server-card__detail-only');
     commandTitle.classList.add('server-card__detail-only');
@@ -667,6 +939,10 @@ const renderServerList = (servers) => {
       rconFallback.value.textContent = '対象外';
     }
 
+    linkedStatus.row.hidden = !server.isProxy;
+    linkedStatus.row.classList.add('server-status-row--linked');
+    serverStatus.row.append(linkedStatus.row);
+
     rconError.hidden = true;
 
     cardHeader.append(title, serverId, rconCompatible);
@@ -687,6 +963,8 @@ const renderServerList = (servers) => {
       controlTitle,
       controlButtons,
       controlNotice,
+      linkedHeader,
+      linkedList,
       consoleHeader,
       disconnectRConNotice,
       consoleView,
@@ -695,6 +973,10 @@ const renderServerList = (servers) => {
       scheduleHeader,
       scheduleList,
       scheduleEditor,
+      configHeader,
+      configMeta,
+      configFields,
+      configNotice,
     );
 
     serverList.append(card);
@@ -707,6 +989,16 @@ const renderServerList = (servers) => {
       rconError,
       rconFallback: rconFallback.value,
       rconStatus: rconStatus.value,
+      isProxy: server.isProxy,
+      linkedServerIds: Object.freeze([...server.linkedServerIds]),
+      linkedStatus: linkedStatus.value,
+      linkedList,
+      configMeta,
+      configFields,
+      configNotice,
+      configRevision: null,
+      configSaveButton,
+      configSavePending: false,
       maintenance: maintenance.value,
       processAlive: processAlive.value,
       serverStatus: serverStatus.value,
@@ -738,6 +1030,8 @@ const renderServerList = (servers) => {
       disconnectRConNotice,
     });
   });
+
+  updateProxyLinkedServerStatuses();
 
   serverPanel.hidden = false;
 
@@ -774,6 +1068,8 @@ const updateServerStatus = (serverId, status) => {
 
   cardInfo.lastServerStatus = status;
   updateServerControlButtons(cardInfo, status);
+  updateServerConfigEditability(cardInfo, status);
+  updateProxyLinkedServerStatuses();
 };
 
 /** RCON接続・認証・stdinフォールバック状態を対象カードへ反映する。 */
@@ -995,19 +1291,27 @@ const updateScheduleStatus = (serverId, schedule) => {
   }
 };
 
-/** コンソールイベントを画面表示用の一行テキストへ変換する。 */
+/** コンソールイベントを検証し、色分けに必要なログレベル付き表示データへ変換する。 */
 const formatConsoleEntry = (entry) => {
   if (
     typeof entry !== 'object'
     || entry === null
     || typeof entry.at !== 'string'
     || typeof entry.source !== 'string'
+    || typeof entry.level !== 'string'
     || typeof entry.message !== 'string'
   ) {
     return null;
   }
 
-  return `[${entry.at}][${entry.source}] ${entry.message}`;
+  const level = ConsoleLogLevels.has(entry.level)
+    ? entry.level
+    : entry.source === 'stderr' ? 'ERROR' : 'STDOUT';
+
+  return {
+    text: `[${entry.at}][${entry.source}] ${entry.message}`,
+    level: level,
+  };
 };
 
 /** コンソール履歴を初期置換または追記し、保持件数を制限して末尾へスクロールする。 */
@@ -1035,7 +1339,15 @@ const updateConsole = (serverId, entries, replace) => {
     );
   }
 
-  cardInfo.consoleView.textContent = cardInfo.consoleEntries.join('\n');
+  const consoleLines = cardInfo.consoleEntries.map((entry) => {
+    const line = document.createElement('span');
+
+    line.className = `server-console__line server-console__line--${entry.level.toLowerCase()}`;
+    line.textContent = entry.text;
+    return line;
+  });
+
+  cardInfo.consoleView.replaceChildren(...consoleLines);
   cardInfo.consoleView.scrollTop = cardInfo.consoleView.scrollHeight;
 };
 
@@ -1143,6 +1455,38 @@ const connectWebSocket = async () => {
           updateScheduleStatus(message.serverId, message.status);
           return;
         }
+        if (message.type === 'config-content') {
+          renderServerConfig(message.serverId, message.config);
+          return;
+        }
+        if (message.type === 'config-rejected') {
+          const cardInfo = serverCards.get(message.serverId);
+
+          if (typeof cardInfo !== 'undefined') {
+            const errors = {
+              server_not_found: '対象サーバーが見つかりません。',
+              config_not_found: '設定ファイルが見つかりません。',
+              config_not_regular_file: '設定ファイルではありません。',
+              config_outside_server_root: '設定ファイルの場所が許可範囲外です。',
+              config_too_large: '設定ファイルが大きすぎます。',
+              config_invalid_utf8: '設定ファイルはUTF-8ではありません。',
+              config_format_unsupported: 'この設定形式はまだ未対応です。',
+              config_server_running: 'サーバー稼働中は設定を保存できません。',
+              config_conflict: '設定ファイルが更新されています。再読込してください。',
+              config_invalid_update: '変更できない項目または不正な値が含まれています。',
+              config_read_failed: '設定ファイルを読み込めませんでした。',
+            };
+
+            cardInfo.configSavePending = false;
+            if (cardInfo.lastServerStatus !== null) {
+              updateServerConfigEditability(cardInfo, cardInfo.lastServerStatus);
+            }
+            cardInfo.configNotice.textContent =
+              errors[message.error] ?? '設定ファイルを読み込めませんでした。';
+          }
+
+          return;
+        }
 
         // スケジュール送信
         if (message.type === 'schedule-submitted') {
@@ -1244,7 +1588,7 @@ const connectWebSocket = async () => {
 
           if (typeof cardInfo !== 'undefined') {
             const actionNames = {
-              start: '開始',
+              start: '起動',
               stop: '停止',
               restart: '再起動',
             };
@@ -1261,7 +1605,7 @@ const connectWebSocket = async () => {
           if (typeof cardInfo !== 'undefined') {
             const errors = {
               server_already_active: 'サーバープロセスは既に存在します。',
-              maintenance_locked: 'DEPLETED 状態かつメンテナンス有効のため、開始できません。',
+              maintenance_locked: 'DEPLETED 状態かつメンテナンス有効のため、起動できません。',
               server_not_found: '対象サーバーが見つかりません。',
               server_not_running: 'サーバーは起動していません。',
             };

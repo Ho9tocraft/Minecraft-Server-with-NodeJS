@@ -2,7 +2,7 @@ import type { RequestHandler } from 'express';
 import session from 'express-session';
 import sessionFileStore from 'session-file-store';
 
-export const MCSCSessionMaxAgeMs = 6 * 60 * 60 * 1000; // 6時間
+export const MCSCSessionMaxAgeMs = 7 * 24 * 60 * 60 * 1000; // 1週間
 const SessionTtlSeconds = MCSCSessionMaxAgeMs / 1000;
 
 export type MCSCSessionOptions = Readonly<{
