@@ -595,7 +595,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
   public getConsoleHistory(): readonly ServerConsoleMessage[] {
     return this.consoleHistory.slice();
   }
-
+  /* ---- SERVER DATA BUILD ---- */
   protected rebuildPrevServerJSON(): MinecraftServerData {
     const { id, name, homeDir, work, process } = this.currentJSONStat;
     const { jvmPath, jvmArgs, jarFile, jarArgs, rcon, proxySocketedSrv } = work;
@@ -683,6 +683,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
   protected autoMaintenanceModeMessage(message: string): string {
     return `${message} Automatic shift to Maintenance Mode.`;
   }
+  /* ---- DEPLOY SCHEDULE INFO ---- */
   protected compareScheduleInfo(pFrom: scheduleTimeInfo, pTgt: scheduleTimeInfo): boolean {
     return (pFrom.motd === pTgt.motd) && (pFrom.exec === pTgt.exec);
   }
@@ -690,6 +691,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
     if (!doOverride) return { doOverride: doOverride, motd: '', exec: '' };
     return { doOverride: doOverride, motd: settings.motd, exec: settings.exec };
   }
+  /* ---- SERVER PROCESS ---- */
   protected buildMemoryArgs(Xmx: JVMMemoryAllocProperty, Xms: JVMMemoryAllocProperty) {
     return `-Xmx${Xmx.amount}${Xmx.unit} -Xms${Xms.amount}${Xms.unit}`;
   }
@@ -795,7 +797,6 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.writeCurrentJSONProcStat();
     });
   }
-
   /* ---- RCON / COMMANDS ---- */
   protected initRconClient(): void {
     const { ERROR, WARN, LOG } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
@@ -1025,7 +1026,6 @@ export abstract class MinecraftServerBase extends EventEmitter {
     if (this.serverProc.stdin === null) return;
     this.serverProc.stdin.write(`${this.commandMessageFixing(cmd)}\r`);
   }
-
   /* ---- TIMERS ---- */
   protected clearStopTimer(): void {
     if (this.stopTimer !== null) {

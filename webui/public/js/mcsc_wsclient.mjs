@@ -1,9 +1,11 @@
+/** 現在開いているWebUIと同一オリジンのWebSocket接続先を組み立てる。 */
 const getWebSocketURL = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 
   return `${protocol}//${window.location.host}/ws`;
 };
 
+/** HTTPセッションを使って、単発利用のWebSocket接続チケットを取得する。 */
 const requestWebSocketTicket = async () => {
   const response = await fetch('/api/auth/ws-ticket', {
     method: 'POST',
@@ -32,6 +34,10 @@ const requestWebSocketTicket = async () => {
   return ticketInfo;
 };
 
+/**
+ * 接続チケットを取得してWebSocketを確立し、受信JSONを呼出元のハンドラへ渡す。
+ * 接続確立前の失敗は Promise の reject として返す。
+ */
 export const connectMCSCWebSocket = async ({
   onClose,
   onMessage,

@@ -806,3 +806,53 @@ label {
     grid-template-columns: 1fr;
   }
 }
+
+.server-schedule-editor {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #c3c4c7;
+  background: #f6f7f7;
+}
+
+.server-schedule-editor > label,
+.server-schedule-editor fieldset,
+.server-schedule-editor fieldset > label:not(:first-of-type) {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.server-schedule-editor input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+
+.server-schedule-editor fieldset > label:first-of-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.server-schedule-editor fieldset {
+  padding: 0.85rem;
+  border: 1px solid #c3c4c7;
+}
+
+.server-schedule-editor legend {
+  padding: 0 0.3rem;
+  font-weight: 700;
+}
+
+.server-schedule-editor input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.server-schedule-editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

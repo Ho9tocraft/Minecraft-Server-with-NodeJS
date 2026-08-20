@@ -22,6 +22,7 @@ const serverDetailView = document.querySelector('#server-detail-view');
 const logoutSubmit = document.querySelector('#logout-submit');
 const navigationItems = document.querySelectorAll('[data-scroll-target]');
 
+/** サイドバーメニューの選択表示を、操作した項目だけへ更新する。 */
 const setActiveNavigation = (activeItem) => {
   navigationItems.forEach((navigationItem) => {
     navigationItem.classList.toggle(
@@ -60,6 +61,7 @@ const WebSocketReconnectDelayMs = 3 * 1000; // 3 sec
 let shouldMaintainWebSocket = false;
 let reconnectTimer = null;
 
+/** 画面共通の通知領域へメッセージを表示する。 */
 const setNotice = (message) => {
   notice.textContent = message;
 };
@@ -70,6 +72,7 @@ const MaxConsoleEntries = 400;
 let webSocketConnecting = false;
 let selectedServerId = null;
 
+/** 詳細表示中のカードを一覧へ戻し、ダッシュボード表示へ切り替える。 */
 const showDashboard = () => {
   selectedServerId = null;
   serverDetailContent.replaceChildren();
@@ -83,6 +86,7 @@ const showDashboard = () => {
   serverList.replaceChildren(...cards);
 };
 
+/** 指定サーバーのカードを詳細領域へ移動して完全表示に切り替える。 */
 const showServerDetail = (serverId) => {
   const cardInfo = serverCards.get(serverId);
 
@@ -105,10 +109,12 @@ serverDetailBack.addEventListener('click', () => {
   showDashboard();
 });
 
+/** WebSocketの接続状態をヘッダーの状態表示へ反映する。 */
 const setWebSocketStatus = (message) => {
   webSocketStatus.textContent = message;
 };
 
+/** 接続済みWebSocketへ操作要求をJSON送信し、送信可否を返す。 */
 const sendWebSocketTell = (tell) => {
   if (
     activeWebSocket === null
@@ -127,6 +133,7 @@ const sendWebSocketTell = (tell) => {
   }
 };
 
+/** 複数行のコンソール入力を検査して、コマンドバッチとして送信する。 */
 const submitCommandBatch = (serverId, commandInput, commandNotice) => {
   const cmds = commandInput.value
     .split(/\r?\n/)
@@ -162,6 +169,7 @@ const submitCommandBatch = (serverId, commandInput, commandNotice) => {
   commandNotice.textContent = `${cmds.length} 件のコマンドを送信しました。`;
 };
 
+/** サーバー状態グリッドで使う、ラベルと更新先要素の組を生成する。 */
 const createStatusRow = (labelText, statusKey) => {
   const row = document.createElement('div');
   const label = document.createElement('span');
@@ -180,6 +188,7 @@ const createStatusRow = (labelText, statusKey) => {
   return { row, value };
 };
 
+/** 受信したサーバー状態に応じて開始・停止・再起動操作の可否を更新する。 */
 const updateServerControlButtons = (cardInfo, status) => {
   const canStart = !status.processAlive && !(
     status.status === 'DEPLETED' && status.maintenance
@@ -194,6 +203,7 @@ const updateServerControlButtons = (cardInfo, status) => {
     : 'メンテナンス有効化';
 };
 
+/** サーバー制御要求を送り、応答受信まで操作ボタンの連打を防止する。 */
 const submitServerControl = (serverId, action) => {
   const cardInfo = serverCards.get(serverId);
 
@@ -225,6 +235,33 @@ const submitServerControl = (serverId, action) => {
     `${actionNames[action]} を要求しました。`;
 };
 
+/** スケジュールスナップショットから、指定タスクのcron式だけを取り出す。 */
+const getScheduleExpression = (schedule, taskName) => {
+  if (!Array.isArray(schedule.tasks)) return '';
+
+  const task = schedule.tasks.find((candidate) =>
+    typeof candidate === 'object'
+    && candidate !== null
+    && candidate.name === taskName
+    && typeof candidate.expression === 'string',
+  );
+
+  return typeof task?.expression === 'string' ? task.expression : '';
+};
+
+/** 「グローバル設定を使用する」の選択に合わせ、固有設定入力欄を有効・無効化する。 */
+const setScheduleOverrideInputsDisabled = (
+  useGlobalInput,
+  motdInput,
+  execInput,
+) => {
+  const disabled = useGlobalInput.checked;
+
+  motdInput.disabled = disabled;
+  execInput.disabled = disabled;
+};
+
+/** サーバー一覧メタデータから、ダッシュボード兼詳細画面用のカード群を再構築する。 */
 const renderServerList = (servers) => {
   serverCards.clear();
   serverList.replaceChildren();
@@ -265,6 +302,31 @@ const renderServerList = (servers) => {
     const controlNotice = document.createElement('p');
     const scheduleTitle = document.createElement('h4');
     const scheduleList = document.createElement('dl');
+    const scheduleHeader = document.createElement('div');
+    const scheduleEditButton = document.createElement('button');
+    const scheduleEditor = document.createElement('form');
+    const scheduleStartLabel = document.createElement('label');
+    const scheduleStartInput = document.createElement('input');
+    const rebootFieldset = document.createElement('fieldset');
+    const rebootLegend = document.createElement('legend');
+    const rebootUseGlobalLabel = document.createElement('label');
+    const rebootUseGlobalInput = document.createElement('input');
+    const rebootMotdLabel = document.createElement('label');
+    const rebootMotdInput = document.createElement('input');
+    const rebootExecLabel = document.createElement('label');
+    const rebootExecInput = document.createElement('input');
+    const shutdownFieldset = document.createElement('fieldset');
+    const shutdownLegend = document.createElement('legend');
+    const shutdownUseGlobalLabel = document.createElement('label');
+    const shutdownUseGlobalInput = document.createElement('input');
+    const shutdownMotdLabel = document.createElement('label');
+    const shutdownMotdInput = document.createElement('input');
+    const shutdownExecLabel = document.createElement('label');
+    const shutdownExecInput = document.createElement('input');
+    const scheduleActions = document.createElement('div');
+    const scheduleSaveButton = document.createElement('button');
+    const scheduleCancelButton = document.createElement('button');
+    const scheduleNotice = document.createElement('p');
     const commandTitle = document.createElement('h4');
     const commandForm = document.createElement('form');
     const commandLabel = document.createElement('label');
@@ -356,8 +418,179 @@ const renderServerList = (servers) => {
     controlButtons.append(startButton, stopButton, restartButton, maintenanceButton);
 
     scheduleTitle.textContent = 'cron管理';
-    scheduleTitle.className = 'server-card__detail-only';
     scheduleList.className = 'server-schedule-list server-card__detail-only';
+
+    scheduleHeader.className = 'server-card__section-header server-card__detail-only';
+
+    scheduleEditButton.type = 'button';
+    scheduleEditButton.textContent = '編集';
+    scheduleEditButton.className = 'server-schedule-edit';
+
+    scheduleEditButton.addEventListener('click', () => {
+      const cardInfo = serverCards.get(server.id);
+
+      if (
+        typeof cardInfo === 'undefined'
+        || cardInfo.scheduleSnapshot === null
+      ) {
+        scheduleNotice.textContent = 'cron設定をまだ取得できていません。';
+        return;
+      }
+
+      const schedule = cardInfo.scheduleSnapshot;
+
+      scheduleStartInput.value = getScheduleExpression(schedule, 'start');
+      rebootMotdInput.value = getScheduleExpression(schedule, 'reboot-motd');
+      rebootExecInput.value = getScheduleExpression(schedule, 'reboot-exec');
+      shutdownMotdInput.value = getScheduleExpression(schedule, 'shutdown-motd');
+      shutdownExecInput.value = getScheduleExpression(schedule, 'shutdown-exec');
+
+      rebootUseGlobalInput.checked = schedule.rebootUsesOverride !== true;
+      shutdownUseGlobalInput.checked = schedule.shutdownUsesOverride !== true;
+
+      setScheduleOverrideInputsDisabled(
+        rebootUseGlobalInput,
+        rebootMotdInput,
+        rebootExecInput,
+      );
+      setScheduleOverrideInputsDisabled(
+        shutdownUseGlobalInput,
+        shutdownMotdInput,
+        shutdownExecInput,
+      );
+
+      scheduleNotice.textContent = '';
+      scheduleList.hidden = true;
+      scheduleEditor.hidden = false;
+      scheduleEditButton.hidden = true;
+      scheduleStartInput.focus();
+    });
+
+    rebootUseGlobalInput.addEventListener('change', () => {
+      setScheduleOverrideInputsDisabled(
+        rebootUseGlobalInput,
+        rebootMotdInput,
+        rebootExecInput,
+      );
+    });
+
+    shutdownUseGlobalInput.addEventListener('change', () => {
+      setScheduleOverrideInputsDisabled(
+        shutdownUseGlobalInput,
+        shutdownMotdInput,
+        shutdownExecInput,
+      );
+    });
+
+    scheduleCancelButton.addEventListener('click', () => {
+      const cardInfo = serverCards.get(server.id);
+
+      if (typeof cardInfo !== 'undefined') {
+        cardInfo.scheduleSavePending = false;
+      }
+
+      scheduleEditor.hidden = true;
+      scheduleList.hidden = false;
+      scheduleEditButton.hidden = false;
+      scheduleSaveButton.disabled = false;
+      scheduleNotice.textContent = '';
+    });
+
+    scheduleEditor.addEventListener('submit', (event) => {
+      event.preventDefault();
+
+      const sent = sendWebSocketTell({
+        type: 'schedule-set',
+        serverId: server.id,
+        schedule: {
+          start: scheduleStartInput.value,
+          reboot: {
+            useOverride: !rebootUseGlobalInput.checked,
+            motd: rebootMotdInput.value,
+            exec: rebootExecInput.value,
+          },
+          shutdown: {
+            useOverride: !shutdownUseGlobalInput.checked,
+            motd: shutdownMotdInput.value,
+            exec: shutdownExecInput.value,
+          },
+        },
+      });
+
+      if (!sent) {
+        scheduleNotice.textContent = 'cron設定を送信できませんでした。';
+        return;
+      }
+
+      const cardInfo = serverCards.get(server.id);
+
+      if (typeof cardInfo !== 'undefined') {
+        cardInfo.scheduleSavePending = true;
+      }
+
+      scheduleSaveButton.disabled = true;
+      scheduleNotice.textContent = 'cron設定を保存しています。';
+    });
+
+    scheduleHeader.append(scheduleTitle, scheduleEditButton);
+
+    scheduleEditor.className = 'server-schedule-editor server-card__detail-only';
+    scheduleEditor.hidden = true;
+
+    scheduleStartLabel.textContent = '定時起動';
+    scheduleStartInput.type = 'text';
+    scheduleStartInput.maxLength = 128;
+    scheduleStartInput.autocomplete = 'off';
+    scheduleStartInput.placeholder = '例: 0 6 * * *';
+    scheduleStartLabel.append(scheduleStartInput);
+
+    rebootLegend.textContent = '日次再起動';
+    rebootUseGlobalInput.type = 'checkbox';
+    rebootUseGlobalLabel.append(rebootUseGlobalInput, ' グローバル設定を使用する');
+
+    rebootMotdLabel.textContent = '予告メッセージのcron式';
+    rebootMotdInput.type = 'text';
+    rebootMotdInput.maxLength = 128;
+    rebootMotdInput.autocomplete = 'off';
+    rebootMotdLabel.append(rebootMotdInput);
+
+    rebootExecLabel.textContent = '再起動実行のcron式';
+    rebootExecInput.type = 'text';
+    rebootExecInput.maxLength = 128;
+    rebootExecInput.autocomplete = 'off';
+    rebootExecLabel.append(rebootExecInput);
+
+    rebootFieldset.append(rebootLegend, rebootUseGlobalLabel, rebootMotdLabel, rebootExecLabel);
+
+    shutdownLegend.textContent = '週間停止';
+    shutdownUseGlobalInput.type = 'checkbox';
+    shutdownUseGlobalLabel.append(shutdownUseGlobalInput, ' グローバル設定を使用する');
+
+    shutdownMotdLabel.textContent = '予告メッセージのcron式';
+    shutdownMotdInput.type = 'text';
+    shutdownMotdInput.maxLength = 128;
+    shutdownMotdInput.autocomplete = 'off';
+    shutdownMotdLabel.append(shutdownMotdInput);
+
+    shutdownExecLabel.textContent = '停止実行のcron式';
+    shutdownExecInput.type = 'text';
+    shutdownExecInput.maxLength = 128;
+    shutdownExecInput.autocomplete = 'off';
+    shutdownExecLabel.append(shutdownExecInput);
+
+    shutdownFieldset.append(shutdownLegend, shutdownUseGlobalLabel, shutdownMotdLabel, shutdownExecLabel);
+
+    scheduleSaveButton.type = 'submit';
+    scheduleSaveButton.textContent = '保存';
+
+    scheduleCancelButton.type = 'button';
+    scheduleCancelButton.textContent = 'キャンセル';
+
+    scheduleActions.className = 'server-schedule-editor__actions';
+    scheduleNotice.className = 'server-card__notice';
+
+    scheduleActions.append(scheduleSaveButton, scheduleCancelButton);
+    scheduleEditor.append(scheduleStartLabel, rebootFieldset, shutdownFieldset, scheduleActions, scheduleNotice);
 
     commandTitle.textContent = 'コマンド送信';
     commandLabel.textContent = '改行区切りで複数入力できます。';
@@ -459,8 +692,9 @@ const renderServerList = (servers) => {
       consoleView,
       commandTitle,
       commandForm,
-      scheduleTitle,
+      scheduleHeader,
       scheduleList,
+      scheduleEditor,
     );
 
     serverList.append(card);
@@ -487,6 +721,19 @@ const renderServerList = (servers) => {
       commandNotice,
       commandSubmit,
       scheduleList,
+      scheduleEditButton,
+      scheduleEditor,
+      scheduleStartInput,
+      rebootUseGlobalInput,
+      rebootMotdInput,
+      rebootExecInput,
+      shutdownUseGlobalInput,
+      shutdownMotdInput,
+      shutdownExecInput,
+      scheduleSaveButton,
+      scheduleNotice,
+      scheduleSnapshot: null,
+      scheduleSavePending: false,
       disconnectRConButton,
       disconnectRConNotice,
     });
@@ -501,6 +748,7 @@ const renderServerList = (servers) => {
   }
 };
 
+/** WebSocketで受信したサーバー稼働状態を、対象カードと操作ボタンへ反映する。 */
 const updateServerStatus = (serverId, status) => {
   const cardInfo = serverCards.get(serverId);
 
@@ -528,6 +776,7 @@ const updateServerStatus = (serverId, status) => {
   updateServerControlButtons(cardInfo, status);
 };
 
+/** RCON接続・認証・stdinフォールバック状態を対象カードへ反映する。 */
 const updateRConStatus = (serverId, status) => {
   const cardInfo = serverCards.get(serverId);
 
@@ -564,6 +813,7 @@ const updateRConStatus = (serverId, status) => {
   }
 };
 
+/** 代表的なcron式を日本語の簡易説明へ変換し、判別不能な式は null を返す。 */
 const describeCronExpression = (expression) => {
   const fields = expression.trim().split(/\s+/);
 
@@ -615,6 +865,7 @@ const describeCronExpression = (expression) => {
   return null;
 };
 
+/** ISO日時を日本時間の管理画面向け表示へ整形し、無効値は null とする。 */
 const formatScheduleNextRun = (value) => {
   if (typeof value !== 'string') return null;
 
@@ -629,17 +880,17 @@ const formatScheduleNextRun = (value) => {
   }).format(date);
 };
 
+/**
+ * スケジューラのスナップショットを一覧表示と編集用キャッシュへ反映する。
+ * 保存待ちなら、サーバーからの反映通知を成功として編集フォームを閉じる。
+ */
 const updateScheduleStatus = (serverId, schedule) => {
   const cardInfo = serverCards.get(serverId);
 
-  if (
-    typeof cardInfo === 'undefined'
-    || typeof schedule !== 'object'
-    || schedule === null
-    || !Array.isArray(schedule.tasks)
-  ) {
+  if (typeof cardInfo === 'undefined' || typeof schedule !== 'object' || schedule === null || !Array.isArray(schedule.tasks)) {
     return;
   }
+  cardInfo.scheduleSnapshot = schedule;
 
   const taskNames = {
     start: 'サーバー起動',
@@ -733,8 +984,18 @@ const updateScheduleStatus = (serverId, schedule) => {
   }
 
   cardInfo.scheduleList.replaceChildren(...taskElements);
+
+  if (cardInfo.scheduleSavePending) {
+    cardInfo.scheduleSavePending = false;
+    cardInfo.scheduleEditor.hidden = true;
+    cardInfo.scheduleList.hidden = false;
+    cardInfo.scheduleEditButton.hidden = false;
+    cardInfo.scheduleSaveButton.disabled = false;
+    cardInfo.scheduleNotice.textContent = 'cron設定を保存しました。';
+  }
 };
 
+/** コンソールイベントを画面表示用の一行テキストへ変換する。 */
 const formatConsoleEntry = (entry) => {
   if (
     typeof entry !== 'object'
@@ -749,6 +1010,7 @@ const formatConsoleEntry = (entry) => {
   return `[${entry.at}][${entry.source}] ${entry.message}`;
 };
 
+/** コンソール履歴を初期置換または追記し、保持件数を制限して末尾へスクロールする。 */
 const updateConsole = (serverId, entries, replace) => {
   const cardInfo = serverCards.get(serverId);
 
@@ -777,6 +1039,7 @@ const updateConsole = (serverId, entries, replace) => {
   cardInfo.consoleView.scrollTop = cardInfo.consoleView.scrollHeight;
 };
 
+/** ログアウト時にWebSocket・再接続予約・サーバーカードを破棄して初期状態へ戻す。 */
 const clearAuthenticatedView = () => {
   shouldMaintainWebSocket = false;
 
@@ -803,6 +1066,7 @@ const clearAuthenticatedView = () => {
   setWebSocketStatus('未接続');
 };
 
+/** ログアウトAPIを呼び出し、成功・失敗を問わず認証済み画面を終了する。 */
 const logout = async () => {
   const response = await fetch('/api/auth/logout', {
     method: 'POST',
@@ -817,6 +1081,7 @@ const logout = async () => {
   throw new Error('ログアウトに失敗しました。');
 };
 
+/** WebSocket接続を確立し、受信イベントを各表示更新処理へ振り分ける。 */
 const connectWebSocket = async () => {
   if (webSocketConnecting) return;
 
@@ -876,6 +1141,32 @@ const connectWebSocket = async () => {
         }
         if (message.type === 'schedule-status') {
           updateScheduleStatus(message.serverId, message.status);
+          return;
+        }
+
+        // スケジュール送信
+        if (message.type === 'schedule-submitted') {
+          const cardInfo = serverCards.get(message.serverId);
+
+          if (typeof cardInfo !== 'undefined') {
+            cardInfo.scheduleNotice.textContent =
+              'cron設定を受理しました。反映を待っています。';
+          }
+
+          return;
+        }
+        if (message.type === 'schedule-rejected') {
+          const cardInfo = serverCards.get(message.serverId);
+
+          if (typeof cardInfo !== 'undefined') {
+            cardInfo.scheduleSavePending = false;
+            cardInfo.scheduleSaveButton.disabled = false;
+            cardInfo.scheduleNotice.textContent =
+              message.error === 'invalid_schedule'
+                ? 'cron式または設定値が不正です。'
+                : '対象サーバーが見つかりません。';
+          }
+
           return;
         }
 
@@ -1034,12 +1325,14 @@ const connectWebSocket = async () => {
   }
 };
 
+/** 読み込み中画面を閉じ、ログインフォームを表示する。 */
 const showLoginPanel = () => {
   loadingPanel.hidden = true;
   authenticatedPanel.hidden = true;
   loginPanel.hidden = false;
 };
 
+/** 認証済みユーザー名を表示し、管理画面とWebSocket接続を開始する。 */
 const showAuthenticatedPanel = (username) => {
   loadingPanel.hidden = true;
   loginPanel.hidden = true;
@@ -1049,6 +1342,7 @@ const showAuthenticatedPanel = (username) => {
   void connectWebSocket();
 };
 
+/** ページ初期化時にHTTPセッションを照会し、表示する画面を決定する。 */
 const loadSession = async () => {
   const response = await fetch('/api/auth/session', {
     credentials: 'same-origin',
@@ -1065,6 +1359,7 @@ const loadSession = async () => {
   return response.json();
 };
 
+/** 切断後の再接続を直列化し、チケット失効時は接続処理を作り直す。 */
 const reconnectWebSocket = async () => {
   if (!shouldMaintainWebSocket) return;
 
@@ -1084,6 +1379,7 @@ const reconnectWebSocket = async () => {
   }
 };
 
+/** 多重予約を避けながら、一定時間後のWebSocket再接続を予約する。 */
 const scheduleWebSocketReconnect = () => {
   if (!shouldMaintainWebSocket || reconnectTimer !== null) return;
 
@@ -1093,6 +1389,7 @@ const scheduleWebSocketReconnect = () => {
   }, WebSocketReconnectDelayMs);
 };
 
+/** ログインAPIへ資格情報を送り、成功時は認証済み画面へ遷移する。 */
 const login = async (username, password) => {
   const response = await fetch('/api/auth/login', {
     method: 'POST',
