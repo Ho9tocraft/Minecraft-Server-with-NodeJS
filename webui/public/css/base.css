@@ -22,8 +22,10 @@ html {
 }
 
 body {
+  display: grid;
   min-width: 20rem;
   min-height: 100vh;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   margin: 0;
   background: #f0f0f1;
   color: #1d2327;
@@ -147,7 +149,7 @@ label {
 
 .admin-layout {
   display: grid;
-  min-height: calc(100vh - 2.9rem);
+  min-height: 0;
   grid-template-columns: 10.5rem minmax(0, 1fr);
 }
 
@@ -402,10 +404,22 @@ label {
   background: #fff;
   color: #50575e;
   font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 3.5rem;
 }
 
 .admin-footer address {
+  display: flex;
+  width: 100%;
   font-style: normal;
+  align-items: center;
+  font-style: normal;
+}
+
+.admin-footer address .version {
+  margin-left: auto;
 }
 
 @media (max-width: 36rem) {
@@ -692,5 +706,103 @@ label {
   .server-card__section-header {
     align-items: start;
     flex-direction: column;
+  }
+}
+
+.server-schedule-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+}
+
+.server-schedule-item {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.8fr) minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+  padding: 0.8rem;
+  border: 1px solid #dcdcde;
+  border-radius: 0.2rem;
+  background: #f6f7f7;
+}
+
+.server-schedule-item dt {
+  grid-row: span 3;
+  align-self: center;
+  font-weight: 700;
+}
+
+.server-schedule-item dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.server-schedule-item__expression {
+  color: #1d2327;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+.server-schedule-item__state {
+  color: #50575e;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 40rem) {
+  .server-schedule-item {
+    grid-template-columns: 1fr;
+  }
+
+  .server-schedule-item dt {
+    grid-row: auto;
+  }
+}
+
+.server-schedule-source {
+  padding: 0.7rem 0.85rem;
+  border-left: 0.25rem solid #2271b1;
+  background: #f0f6fc;
+  color: #1d2327;
+  font-size: 0.85rem;
+}
+
+.server-schedule-item__summary {
+  margin: 0;
+  color: #1d2327;
+  font-weight: 700;
+}
+
+.server-schedule-item__expression {
+  grid-column: 2;
+  margin: 0;
+  color: #50575e;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 40rem) {
+  .server-schedule-item__expression {
+    grid-column: auto;
+  }
+}
+
+.server-schedule-source {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.8fr) minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+  align-items: center;
+}
+
+.server-schedule-source dt,
+.server-schedule-source dd {
+  margin: 0;
+}
+
+.server-schedule-source dt {
+  font-weight: 700;
+}
+
+@media (max-width: 40rem) {
+  .server-schedule-source {
+    grid-template-columns: 1fr;
   }
 }

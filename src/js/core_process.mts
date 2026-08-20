@@ -1,4 +1,5 @@
 import { join } from 'path';
+import { SSMan } from './minecraft/scheduler.mjs';
 import { generateServerInstance } from './minecraft/servers.mjs';
 import { isAccessableNeededFiles, loadGlobalDataJSON, loadServerDataJSON } from './minecraft/data_io.mjs';
 const { dirname } = import.meta;
@@ -9,6 +10,8 @@ export const coreModuleInitProcess = (): void => {
   if (globalThis.DEBUG_MODE) globalThis.MCSERV_CONTROLLER_ENV.GLOBAL_CONFIG.global_data.mcsRootDir = 'F:/MinecraftServers/Backup';
   globalThis.MCSERV_CONTROLLER_ENV.SERVER_CONFIG_INFO = loadServerDataJSON().servers;
   generateServerInstance();
+
+  SSMan.replaceAll(globalThis.MCSERV_CONTROLLER_ENV.SERVER_INSTANCES);
 };
 
 export const initGlobalThisVariables = (): void => {

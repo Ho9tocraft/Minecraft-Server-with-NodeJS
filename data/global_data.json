@@ -9,8 +9,8 @@
                 "exec": "0 0 13 * * *"
             },
             "weeklyShutdown": {
-                "motd": "0 50 23 2 * *",
-                "exec": "0 55 23 2 * *"
+                "motd": "0 50 23 * * 2",
+                "exec": "0 55 23 * * 2"
             },
             "pluginServBuildPull": "0 10 7 * * *"
         }

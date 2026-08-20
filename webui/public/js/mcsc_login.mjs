@@ -263,6 +263,8 @@ const renderServerList = (servers) => {
     const restartButton = document.createElement('button');
     const maintenanceButton = document.createElement('button');
     const controlNotice = document.createElement('p');
+    const scheduleTitle = document.createElement('h4');
+    const scheduleList = document.createElement('dl');
     const commandTitle = document.createElement('h4');
     const commandForm = document.createElement('form');
     const commandLabel = document.createElement('label');
@@ -352,6 +354,10 @@ const renderServerList = (servers) => {
     });
 
     controlButtons.append(startButton, stopButton, restartButton, maintenanceButton);
+
+    scheduleTitle.textContent = 'cron管理';
+    scheduleTitle.className = 'server-card__detail-only';
+    scheduleList.className = 'server-schedule-list server-card__detail-only';
 
     commandTitle.textContent = 'コマンド送信';
     commandLabel.textContent = '改行区切りで複数入力できます。';
@@ -453,6 +459,8 @@ const renderServerList = (servers) => {
       consoleView,
       commandTitle,
       commandForm,
+      scheduleTitle,
+      scheduleList,
     );
 
     serverList.append(card);
@@ -478,6 +486,7 @@ const renderServerList = (servers) => {
       lastServerStatus: null,
       commandNotice,
       commandSubmit,
+      scheduleList,
       disconnectRConButton,
       disconnectRConNotice,
     });
@@ -553,6 +562,177 @@ const updateRConStatus = (serverId, status) => {
     cardInfo.rconError.hidden = true;
     cardInfo.rconError.textContent = '';
   }
+};
+
+const describeCronExpression = (expression) => {
+  const fields = expression.trim().split(/\s+/);
+
+  if (fields.length === 5) fields.unshift('0');
+  if (fields.length !== 6) return null;
+
+  const [second, minute, hour, dayOfMonth, month, dayOfWeek] = fields;
+  const isNumber = (value) => /^(?:0|[1-9]\d?)$/.test(value);
+
+  if (!isNumber(second) || !isNumber(minute) || !isNumber(hour)) {
+    return null;
+  }
+
+  const time = second === '0'
+    ? `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`
+    : `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}`;
+
+  if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
+    return `毎日 ${time}`;
+  }
+
+  const weekdayNames = {
+    0: '日曜',
+    1: '月曜',
+    2: '火曜',
+    3: '水曜',
+    4: '木曜',
+    5: '金曜',
+    6: '土曜',
+    7: '日曜',
+  };
+
+  if (
+    dayOfMonth === '*'
+    && month === '*'
+    && Object.hasOwn(weekdayNames, dayOfWeek)
+  ) {
+    return `毎週 ${weekdayNames[dayOfWeek]} ${time}`;
+  }
+
+  if (
+    isNumber(dayOfMonth)
+    && month === '*'
+    && dayOfWeek === '*'
+  ) {
+    return `毎月 ${Number(dayOfMonth)}日 ${time}`;
+  }
+
+  return null;
+};
+
+const formatScheduleNextRun = (value) => {
+  if (typeof value !== 'string') return null;
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return null;
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Tokyo',
+  }).format(date);
+};
+
+const updateScheduleStatus = (serverId, schedule) => {
+  const cardInfo = serverCards.get(serverId);
+
+  if (
+    typeof cardInfo === 'undefined'
+    || typeof schedule !== 'object'
+    || schedule === null
+    || !Array.isArray(schedule.tasks)
+  ) {
+    return;
+  }
+
+  const taskNames = {
+    start: 'サーバー起動',
+    'reboot-motd': '日次再起動の予告',
+    'reboot-exec': '日次再起動',
+    'shutdown-motd': '週間停止の予告',
+    'shutdown-exec': '週間停止',
+  };
+
+  const sourceInfo = document.createElement('div');
+  const sourceTitle = document.createElement('dt');
+  const sourceValue = document.createElement('dd');
+
+  const rebootSource = schedule.rebootUsesOverride === true
+    ? 'このサーバー固有の設定'
+    : 'グローバル設定を使用中';
+
+  const shutdownSource = schedule.shutdownUsesOverride === true
+    ? 'このサーバー固有の設定'
+    : 'グローバル設定を使用中';
+
+  sourceInfo.className = 'server-schedule-source';
+  sourceTitle.textContent = '設定元';
+  sourceValue.textContent =
+    `日次再起動: ${rebootSource} / 週間停止: ${shutdownSource}`;
+
+  sourceInfo.append(sourceTitle, sourceValue);
+
+  const taskElements = [sourceInfo];
+
+  for (const task of schedule.tasks) {
+    if (
+      typeof task !== 'object'
+      || task === null
+      || typeof task.name !== 'string'
+      || typeof task.expression !== 'string'
+      || typeof task.configured !== 'boolean'
+      || typeof task.valid !== 'boolean'
+    ) {
+      continue;
+    }
+
+    const item = document.createElement('div');
+    const title = document.createElement('dt');
+    const summary = document.createElement('dd');
+    const state = document.createElement('dd');
+    const expression = document.createElement('dd');
+
+    item.className = 'server-schedule-item';
+    title.textContent = taskNames[task.name] ?? task.name;
+
+    if (!task.configured) {
+      summary.textContent = '設定されていません';
+      state.textContent = '無効';
+    } else if (!task.valid) {
+      summary.textContent = 'cron式が不正です';
+      state.textContent = '無効';
+    } else {
+      summary.textContent =
+        describeCronExpression(task.expression)
+        ?? '複雑なcron設定';
+
+      const taskStateNames = {
+        idle: '待機中',
+        running: '実行中',
+        stopped: '停止中',
+        destroyed: '破棄済み',
+      };
+
+      state.textContent = typeof task.taskStatus === 'string'
+        ? taskStateNames[task.taskStatus] ?? task.taskStatus
+        : '未登録';
+
+      const nextRun = formatScheduleNextRun(task.nextRun);
+
+      if (nextRun !== null) {
+        state.textContent += ` / 次回: ${nextRun}`;
+      }
+    }
+
+    expression.textContent = task.expression.length > 0
+      ? `cron式: ${task.expression}`
+      : '';
+
+    summary.className = 'server-schedule-item__summary';
+    state.className = 'server-schedule-item__state';
+    expression.className = 'server-schedule-item__expression';
+
+    item.append(title, summary, state, expression);
+    taskElements.push(item);
+  }
+
+  cardInfo.scheduleList.replaceChildren(...taskElements);
 };
 
 const formatConsoleEntry = (entry) => {
@@ -692,6 +872,10 @@ const connectWebSocket = async () => {
         }
         if (message.type === 'rcon-status') {
           updateRConStatus(message.serverId, message.status);
+          return;
+        }
+        if (message.type === 'schedule-status') {
+          updateScheduleStatus(message.serverId, message.status);
           return;
         }
 

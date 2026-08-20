@@ -4,10 +4,13 @@ import { WebSocket, WebSocketServer } from 'ws';
 import {
   type MinecraftServerBase,
   type RConStatusSnapshot,
+  type ScheduleOverrideInput,
   type ServerConsoleMessage,
   type ServerMetadata,
   type ServerStatusSnapshot,
+  type ServerScheduleUpdate,
 } from '../minecraft/servers.mjs';
+import { SSMan, type ServerScheduleSnapshot } from '../minecraft/scheduler.mjs';
 import { type MCSCWebSocketAccess } from './mcsc_websocket.mjs';
 
 type MCSCWSServerErrorMsg = 'server_not_found' | 'server_not_running';
@@ -31,6 +34,9 @@ type MCSCWebSocketMessage =
   | Readonly<{ type: 'console-history', serverId: string, entries: readonly ServerConsoleMessage[] }>
   | Readonly<{ type: 'console-output', serverId: string, entry: ServerConsoleMessage }>
   | Readonly<{ type: 'rcon-status', serverId: string, status: RConStatusSnapshot }>
+  | Readonly<{ type: 'schedule-status', serverId: string, status: ServerScheduleSnapshot }>
+  | Readonly<{ type: 'schedule-submitted', serverId: string, status: ServerScheduleSnapshot }>
+  | Readonly<{ type: 'schedule-rejected', serverId: string, error: 'invalid_schedule' | MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'command-submitted', serverId: string, commandCount: number }>
   | Readonly<{ type: 'command-rejected', serverId: string, error: 'invalid_message' | MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'request-rejected', error: 'invalid_message' }>
@@ -40,10 +46,12 @@ type MCSCWebSocketCmdBatch = Readonly<{ type: 'command-batch', serverId: string,
 type MCSCWebSocketRConDisconnect = Readonly<{ type: 'rcon-disconnect', serverId: string }>;
 type MCSCWebSocketServerControl = Readonly<{ type: 'server-control', serverId: string, act: 'start' | 'stop' | 'restart' }>;
 type MCSCWebSocketMaintenanceSet = Readonly<{ type: 'maintenance-set', serverId: string, enabled: boolean }>;
+type MCSCWebSocketScheduleSet = Readonly<{ type: 'schedule-set', serverId: string, schedule: ServerScheduleUpdate }>;
 type MCSCWebSocketIncomingTell =
   | MCSCWebSocketCmdBatch
   | MCSCWebSocketRConDisconnect
   | MCSCWebSocketMaintenanceSet
+  | MCSCWebSocketScheduleSet
   | MCSCWebSocketServerControl;
 type HTTPErrorCodeText = // めんどくせーのでここでエラーコード列挙させろォ！
   | '400 Bad Request'
@@ -86,6 +94,37 @@ const extractTicket = (protocolHeader: string | undefined): string | null => {
   return ticket;
 };
 
+const isScheduleOverrideInput = (
+  value: unknown,
+): value is ScheduleOverrideInput => {
+  if (typeof value !== 'object' || value === null) return false;
+
+  const input = value as Record<string, unknown>;
+
+  return (
+    typeof input.useOverride === 'boolean'
+    && typeof input.motd === 'string'
+    && input.motd.length <= 128
+    && typeof input.exec === 'string'
+    && input.exec.length <= 128
+  );
+};
+
+const isServerScheduleUpdate = (
+  value: unknown,
+): value is ServerScheduleUpdate => {
+  if (typeof value !== 'object' || value === null) return false;
+
+  const input = value as Record<string, unknown>;
+
+  return (
+    typeof input.start === 'string'
+    && input.start.length <= 128
+    && isScheduleOverrideInput(input.reboot)
+    && isScheduleOverrideInput(input.shutdown)
+  );
+};
+
 const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSocketIncomingTell | null => {
   if (isBin) return null;
   let rawMsg: string;
@@ -102,7 +141,7 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
   if (typeof parsedMsg !== 'object' || parsedMsg === null || Array.isArray(parsedMsg)) return null;
 
   const msg = parsedMsg as Record<string, unknown>;
-  const { action: act, cmds, enabled, serverId, type } = msg;
+  const { action: act, cmds, enabled, schedule: cron, serverId, type } = msg;
 
   if (typeof serverId !== 'string' || serverId.length === 0 || serverId.length > 128) return null;
 
@@ -115,6 +154,25 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
     serverId: serverId,
     enabled: enabled
   });
+  if (type === 'schedule-set' && isServerScheduleUpdate(cron)) {
+    return Object.freeze({
+      type: 'schedule-set',
+      serverId: serverId,
+      schedule: Object.freeze({
+        start: cron.start,
+        reboot: Object.freeze({
+          useOverride: cron.reboot.useOverride,
+          motd: cron.reboot.motd,
+          exec: cron.reboot.exec,
+        }),
+        shutdown: Object.freeze({
+          useOverride: cron.shutdown.useOverride,
+          motd: cron.shutdown.motd,
+          exec: cron.shutdown.exec,
+        }),
+      }),
+    });
+  }
   if (type === 'server-control' && (act === 'start' || act === 'stop' || act === 'restart')) return Object.freeze({
     type: 'server-control',
     serverId: serverId,
@@ -209,6 +267,43 @@ const handleMaintenanceSet = (socket: WebSocket, maintenanceReq: MCSCWebSocketMa
   });
 };
 
+const handleScheduleSet = (
+  socket: WebSocket,
+  scheduleReq: MCSCWebSocketScheduleSet,
+  servers: readonly MinecraftServerBase[],
+): void => {
+  const targetServer = servers.find((server) => {
+    return server.srvId === scheduleReq.serverId;
+  });
+
+  if (typeof targetServer === 'undefined') {
+    sendMessage(socket, {
+      type: 'schedule-rejected',
+      serverId: scheduleReq.serverId,
+      error: 'server_not_found',
+    });
+    return;
+  }
+
+  try {
+    targetServer.setScheduleConfig(scheduleReq.schedule);
+    SSMan.refresh(targetServer);
+  } catch {
+    sendMessage(socket, {
+      type: 'schedule-rejected',
+      serverId: scheduleReq.serverId,
+      error: 'invalid_schedule',
+    });
+    return;
+  }
+
+  sendMessage(socket, {
+    type: 'schedule-submitted',
+    serverId: scheduleReq.serverId,
+    status: SSMan.getSnapshot(targetServer),
+  });
+};
+
 const handleServControl = (socket: WebSocket, controlReq: MCSCWebSocketServerControl, servers: readonly MinecraftServerBase[]): void => {
   const { serverId, act } = controlReq;
   const tgtServ = servers.find((server) => { return server.srvId === serverId; });
@@ -286,6 +381,9 @@ const handleIncomingTell = (socket: WebSocket, data: WebSocket.RawData, isBin: b
     case 'maintenance-set':
       handleMaintenanceSet(socket, incomingTell, servers);
       break;
+    case 'schedule-set':
+      handleScheduleSet(socket, incomingTell, servers);
+      break;
     case 'server-control':
       handleServControl(socket, incomingTell, servers);
       break;
@@ -322,15 +420,24 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
     const onServerStatus = (status: ServerStatusSnapshot): void => {
       sendMessage(socket, { type: 'server-status', serverId: server.srvId, status: status });
     };
+    const onScheduleStatus = (status: ServerScheduleSnapshot): void => {
+      sendMessage(socket, {
+        type: 'schedule-status',
+        serverId: server.srvId,
+        status: status,
+      });
+    };
 
     server.on('console-output', onConsoleOut);
     server.on('rcon-status', onRConStatus);
     server.on('server-status', onServerStatus);
+    server.on('schedule-status', onScheduleStatus);
 
     unsubscribeFunc.push(() => {
       server.off('console-output', onConsoleOut);
       server.off('rcon-status', onRConStatus);
       server.off('server-status', onServerStatus);
+      server.off('schedule-status', onScheduleStatus);
     });
 
     // 初期値送信
@@ -338,6 +445,7 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
     sendMessage(socket, { type: 'console-history', serverId: server.srvId, entries: historyEntries });
     sendMessage(socket, { type: 'rcon-status', serverId: server.srvId, status: server.getRConStatus() });
     sendMessage(socket, { type: 'server-status', serverId: server.srvId, status: server.getServStatus() });
+    sendMessage(socket, { type: 'schedule-status', serverId: server.srvId, status: SSMan.getSnapshot(server) });
   });
 
   return (): void => { unsubscribeFunc.forEach((unsub) => { unsub(); }) };

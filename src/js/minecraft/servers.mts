@@ -6,15 +6,16 @@ import { Buffer } from 'buffer';
 import { setTimeout } from 'timers';
 import { readFileSync, existsSync } from 'fs';
 import _ from 'lodash';
+import { StringDecoder } from 'string_decoder';
+import { join } from 'path';
+import { EventEmitter } from 'events';
+import cron from 'node-cron';
 import { checkHaveDangerUnicode, decryptEncryptedStr, decryptRconPasswd } from '../general_utils/decryption_utils.mjs';
 import { Rcon, RconCommandError, MaxCommandPacketLength } from '../rcon.mjs';
 import { emitLog } from '../general_utils/logger_utils.mjs';
 import { buildExecBinEnv } from '../general_utils/string_utils.mjs';
 import { saveServerDataJSON } from './data_io.mjs';
 import { loadCacheFile, writeCacheFile } from '../general_utils/json_utils.mjs';
-import { StringDecoder } from 'string_decoder';
-import { join } from 'path';
-import { EventEmitter } from 'events';
 const { from } = Buffer;
 const { isEqual } = _;
 const isWin = /windows/i.test(OSType().toString());
@@ -44,6 +45,8 @@ export type ServerConsoleMessage = Readonly<{ at: string, ts: number, source: Lo
 export type RConStatusSnapshot = Readonly<{ status: RConConnectionState, authed: boolean, fallbacked: boolean, lastError: string | null }>;
 export type ServerStatusSnapshot = Readonly<{ status: RunningStatus, maintenance: boolean, processAlive: boolean }>;
 export type ServerMetadata = Readonly<{ id: string, name: string, rconCompat: boolean }>;
+export type ScheduleOverrideInput = Readonly<{ useOverride: boolean, motd: string, exec: string }>;
+export type ServerScheduleUpdate = Readonly<{ start: string, reboot: ScheduleOverrideInput, shutdown: ScheduleOverrideInput }>;
 
 type searchResultInfo = {
   idx: number;
@@ -386,6 +389,71 @@ export abstract class MinecraftServerBase extends EventEmitter {
     }
 
     this.mayMaintenance = enabled;
+    this.writeCurrentJSONProcStat();
+  }
+  public setScheduleConfig(schedule: ServerScheduleUpdate): void {
+    const normalizeCron = (value: unknown, fieldName: string): string => {
+      if (typeof value !== 'string') {
+        throw new TypeError(`${fieldName} must be a string.`);
+      }
+
+      const expression = value.trim();
+
+      if (expression.length > 128) {
+        throw new RangeError(`${fieldName} is too long.`);
+      }
+
+      if (expression.length > 0 && !cron.validate(expression)) {
+        throw new RangeError(`${fieldName} is not a valid cron expression.`);
+      }
+
+      return expression;
+    };
+
+    if (typeof schedule !== 'object' || schedule === null || typeof schedule.reboot !== 'object'
+      || schedule.reboot === null || typeof schedule.shutdown !== 'object' || schedule.shutdown === null
+      || typeof schedule.reboot.useOverride !== 'boolean' || typeof schedule.shutdown.useOverride !== 'boolean') {
+      throw new TypeError('Invalid schedule configuration.');
+    }
+
+    const start = normalizeCron(schedule.start, 'start');
+
+    const reboot = {
+      useOverride: schedule.reboot.useOverride,
+      motd: normalizeCron(schedule.reboot.motd, 'reboot.motd'),
+      exec: normalizeCron(schedule.reboot.exec, 'reboot.exec'),
+    };
+
+    const shutdown = {
+      useOverride: schedule.shutdown.useOverride,
+      motd: normalizeCron(schedule.shutdown.motd, 'shutdown.motd'),
+      exec: normalizeCron(schedule.shutdown.exec, 'shutdown.exec'),
+    };
+
+    const {
+      dayReboot: globalReboot,
+      weeklyShutdown: globalShutdown,
+    } = globalThis.MCSERV_CONTROLLER_ENV
+      .GLOBAL_CONFIG
+      .global_data
+        .serverScheduleTime;
+
+    this.execStart = start;
+
+    this.scheduleReboot = reboot.useOverride
+      ? { motd: reboot.motd, exec: reboot.exec }
+      : { motd: globalReboot.motd, exec: globalReboot.exec };
+
+    this.scheduleShutdown = shutdown.useOverride
+      ? { motd: shutdown.motd, exec: shutdown.exec }
+      : { motd: globalShutdown.motd, exec: globalShutdown.exec };
+
+    this.currentJSONStat.process.scheduleTime.override.dayReboot.doOverride =
+      reboot.useOverride;
+
+    this.currentJSONStat.process.scheduleTime.override.weeklyShutdown.doOverride =
+      shutdown.useOverride;
+
     this.writeCurrentJSONProcStat();
   }
   public executeConsoleCommands(input: string | readonly string[]): void {
@@ -1082,7 +1150,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.armRconConnTimer(client);
       client.connect();
     }, RConReconnectDelay);
-  }  
+  }
   protected clearRconTimers(): void {
     this.clearRconConnTimer();
     this.clearRconIdleTimer();
