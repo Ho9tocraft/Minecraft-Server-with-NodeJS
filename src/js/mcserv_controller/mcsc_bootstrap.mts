@@ -4,7 +4,7 @@ import { createWebApp } from './mcsc_app.mjs';
 import { createMCSCPageRouter } from './mcsc_viewpage.mjs';
 import { createMCSCSession } from './mcsc_session.mjs';
 import { loadMCSCWebConfig } from './mcsc_webconf.mjs';
-import { closeMCSCWebServ, createMCSCWebServ, listenMCSCWebServ, type MCSCWebServer } from './mcsc_webserv.mjs';
+import { closeMCSCWebServ, createMCSCWebServ, listenMCSCWebServ, reloadMCSCWebTLS, type MCSCWebServer } from './mcsc_webserv.mjs';
 import { MCSCWebSocketAccess } from './mcsc_websocket.mjs';
 import { installMCSCWebSocketBridge, type MCSCWebSocketBridge } from './mcsc_wsbridge.mjs';
 
@@ -29,8 +29,23 @@ export const ignitionMCSCWebUI = async (): Promise<MCSCWebUI> => {
   });
 
   let closingPromise: Promise<void> | null = null;
+  const reloadTLS = (): void => {
+    if (tls === null) return;
+
+    const { ERROR, INFO } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+    try {
+      reloadMCSCWebTLS(server, tls);
+      emitLog(INFO, 'TLS certificate reloaded.', { optStr: '[WEB-UI]' });
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      emitLog(ERROR, `TLS certificate reload failed: ${detail}`, { optStr: '[WEB-UI]' });
+    }
+  };
+  if (tls !== null) process.on('SIGHUP', reloadTLS);
+
   const closeWebUI = (): Promise<void> => {
     if (closingPromise !== null) return closingPromise;
+    if (tls !== null) process.off('SIGHUP', reloadTLS);
     webSocketBridge.close();
     closingPromise = closeMCSCWebServ(server);
 

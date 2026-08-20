@@ -21,6 +21,9 @@ Environment=NODE_ENV=production
 Restart=on-failure
 RestartSec=5s
 
+# 証明書更新時はプロセスを終了させず、TLS証明書だけを再読込する。
+ExecReload=/bin/kill -HUP $MAINPID
+
 # 初回SIGTERMはNode.js本体だけへ届け、MCSCがMinecraftサーバーを正常停止する猶予を与える。
 # Timeout後だけ、残存するプロセスグループをsystemdが強制終了する。
 KillSignal=SIGTERM

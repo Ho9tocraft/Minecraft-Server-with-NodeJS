@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { createServer as createHTTPServer, type Server as HTTPServer } from 'http';
-import { createServer as createHTTPSServer, type Server as HTTPSServer } from 'https';
+import { createServer as createHTTPSServer, Server as HTTPSServer } from 'https';
 import { type Express } from 'express';
 
 export type MCSCHTTPServOpt = Readonly<{ host: string, port: number }>;
@@ -19,6 +19,17 @@ export const createMCSCWebServ = (app: Express, tls: MCSCTLSOptions | null): MCS
     key: readFileSync(tls.privateKeyFile),
     minVersion: 'TLSv1.2',
   }, app);
+};
+
+/** Replaces the TLS context for new HTTPS connections without stopping the WebUI. */
+export const reloadMCSCWebTLS = (server: MCSCWebServer, tls: MCSCTLSOptions): void => {
+  if (!(server instanceof HTTPSServer)) throw new TypeError('Cannot reload TLS on an HTTP server.');
+
+  server.setSecureContext({
+    cert: readFileSync(tls.certificateFile),
+    key: readFileSync(tls.privateKeyFile),
+    minVersion: 'TLSv1.2',
+  });
 };
 
 export const listenMCSCWebServ = (server: MCSCWebServer, options: MCSCHTTPServOpt): Promise<void> => {

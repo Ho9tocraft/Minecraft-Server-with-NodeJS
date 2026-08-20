@@ -41,3 +41,35 @@
 - `ExecStart`: 当該ユーザーが所有するNode.js実行ファイルの絶対パス
 
 `nvm` はsystemdから自動では読み込まれないため、`ExecStart` に `node` や `nvm` の相対パスは使えません。ユニットは `SIGTERM` を受けると、WebUIの受付を止めてから各Minecraftサーバーの正常停止を待機します。`TimeoutStopSec=210s` はこの待機時間です。
+
+### WebUIの直接HTTPS運用と証明書更新
+
+SSHリモートポートフォワードで公開する場合も、WebUI自身でTLSを終端できます。`mcsc_webui.env` を次のように設定します。`MCSC_TRUST_PROXY=false` は維持してください。
+
+```dotenv
+MCSC_WEB_HOST=127.0.0.1
+MCSC_WEB_PORT=11110
+MCSC_WEB_ORIGIN=https://your-hostname.example:11110
+MCSC_TRUST_PROXY=false
+MCSC_COOKIE_SECURE=true
+MCSC_TLS_CERT_FILE=./tls/fullchain.pem
+MCSC_TLS_KEY_FILE=./tls/privkey.pem
+```
+
+WebUIをrootで実行したり、`/etc/letsencrypt/live/.../privkey.pem` を直接読ませたりしてはいけません。Certbot用root処理とWebUI実行ユーザーを分離するため、[`systemd/mcserv-controller-cert-deploy-hook.example`](systemd/mcserv-controller-cert-deploy-hook.example) を使います。
+
+1. ファイル内の `__MCSC_USER__`、`__MCSC_GROUP__`、`__MCSC_PROJECT_DIR__`、必要なら `MCSC_SERVICE` を実値へ置換する。`__MCSC_PROJECT_DIR__` はsystemdユニットの `WorkingDirectory` と同じ絶対パスにする。
+2. `/usr/local/sbin/mcserv-controller-cert-deploy` としてroot所有・`0755`で配置する。
+3. 初回は次をrootで一度実行し、発行済み証明書をプロジェクト配下の `tls/` へコピーする。
+
+```bash
+RENEWED_LINEAGE=/etc/letsencrypt/live/your-hostname.example \
+  /usr/local/sbin/mcserv-controller-cert-deploy
+```
+
+4. `/etc/letsencrypt/renewal-hooks/deploy/` に同スクリプトへの実行可能なシンボリックリンクを置く。以後、Certbotが証明書を更新した時だけ、専用ユーザーが読める証明書・秘密鍵へ差し替えられる。WebUIは `SIGHUP` でTLS証明書だけを再読込するため、Minecraftサーバーは停止しない。
+
+```bash
+ln -s /usr/local/sbin/mcserv-controller-cert-deploy \
+  /etc/letsencrypt/renewal-hooks/deploy/mcserv-controller-cert-deploy
+```

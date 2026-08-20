@@ -1,0 +1,27 @@
+#!/bin/sh
+# Certbot deploy hook for the MCSC WebUI.
+# Replace all __MCSC_*__ placeholders before installing this file.
+set -eu
+
+MCSC_USER='__MCSC_USER__'
+MCSC_GROUP='__MCSC_GROUP__'
+MCSC_SERVICE='mcserv-controller.service'
+MCSC_PROJECT_DIR='__MCSC_PROJECT_DIR__'
+MCSC_TLS_DIR="$MCSC_PROJECT_DIR/tls"
+
+# Certbot provides RENEWED_LINEAGE only to deploy hooks.  It is deliberately
+# required, so this script cannot accidentally copy a certificate for another domain.
+if [ -z "${RENEWED_LINEAGE:-}" ]; then
+  echo 'RENEWED_LINEAGE is required (run this only as a Certbot deploy hook).' >&2
+  exit 2
+fi
+
+install -d -o "$MCSC_USER" -g "$MCSC_GROUP" -m 0750 "$MCSC_TLS_DIR"
+install -o "$MCSC_USER" -g "$MCSC_GROUP" -m 0640 \
+  "$RENEWED_LINEAGE/fullchain.pem" "$MCSC_TLS_DIR/fullchain.pem"
+install -o "$MCSC_USER" -g "$MCSC_GROUP" -m 0600 \
+  "$RENEWED_LINEAGE/privkey.pem" "$MCSC_TLS_DIR/privkey.pem"
+
+# Reload only when the service is currently active, after both replacement files
+# are complete. ExecReload sends SIGHUP, so Minecraft servers are not stopped.
+systemctl try-reload "$MCSC_SERVICE"
