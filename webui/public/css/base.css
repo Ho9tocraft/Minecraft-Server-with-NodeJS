@@ -755,12 +755,19 @@ label {
   display: none;
 }
 
+/* プロキシはダッシュボードで連動先の稼働状況だけを示し、接続人数は詳細画面へ集約する。 */
+#dashboard-view .server-card[data-proxy-server="true"] [data-status-key="players"] {
+  display: none;
+}
+
 #dashboard-view .server-status-row:not(
   [data-status-key="server"]
 ):not(
   [data-status-key="maintenance"]
 ):not(
   [data-status-key="linked"]
+):not(
+  [data-status-key="players"]
 ) {
   display: none;
 }
@@ -885,6 +892,34 @@ label {
 .server-linked-list span[data-state="DEPLETED"],
 .server-linked-list span[data-state="FAILED"] {
   color: #b32d2e;
+}
+
+.server-player-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+  padding: 0;
+  list-style: none;
+}
+
+.server-player-list li {
+  padding: 0.45rem 0.7rem;
+  border: 1px solid #72aee6;
+  border-radius: 999px;
+  background: #f0f6fc;
+  color: #135e96;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+.server-player-list li:only-child {
+  border-color: #dcdcde;
+  border-radius: 0;
+  background: #f6f7f7;
+  color: #50575e;
+  font-family: inherit;
 }
 
 .server-config-meta {

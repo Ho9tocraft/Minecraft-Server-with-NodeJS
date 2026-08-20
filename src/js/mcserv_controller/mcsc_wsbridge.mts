@@ -7,6 +7,7 @@ import {
   type ScheduleOverrideInput,
   type ServerConsoleMessage,
   type ServerMetadata,
+  type ServerPlayerSnapshot,
   type ServerStatusSnapshot,
   type ServerScheduleUpdate,
 } from '../minecraft/servers.mjs';
@@ -35,6 +36,7 @@ type MCSCWebSocketMessage =
   | Readonly<{ type: 'hello', username: string }>
   | Readonly<{ type: 'server-list', servers: readonly ServerMetadata[] }>
   | Readonly<{ type: 'server-status', serverId: string, status: ServerStatusSnapshot }>
+  | Readonly<{ type: 'player-status', serverId: string, status: ServerPlayerSnapshot }>
   | Readonly<{ type: 'server-control-submitted', serverId: string, action: 'start' | 'stop' | 'restart' }>
   | Readonly<{ type: 'server-control-rejected', serverId: string, error: 'server_already_active' | 'maintenance_locked' | MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'maintenance-submitted', serverId: string, enabled: boolean }>
@@ -511,6 +513,9 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
     const onServerStatus = (status: ServerStatusSnapshot): void => {
       sendMessage(socket, { type: 'server-status', serverId: server.srvId, status: status });
     };
+    const onPlayerStatus = (status: ServerPlayerSnapshot): void => {
+      sendMessage(socket, { type: 'player-status', serverId: server.srvId, status: status });
+    };
     const onScheduleStatus = (status: ServerScheduleSnapshot): void => {
       sendMessage(socket, {
         type: 'schedule-status',
@@ -522,12 +527,14 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
     server.on('console-output', onConsoleOut);
     server.on('rcon-status', onRConStatus);
     server.on('server-status', onServerStatus);
+    server.on('player-status', onPlayerStatus);
     server.on('schedule-status', onScheduleStatus);
 
     unsubscribeFunc.push(() => {
       server.off('console-output', onConsoleOut);
       server.off('rcon-status', onRConStatus);
       server.off('server-status', onServerStatus);
+      server.off('player-status', onPlayerStatus);
       server.off('schedule-status', onScheduleStatus);
     });
 
@@ -536,6 +543,7 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
     sendMessage(socket, { type: 'console-history', serverId: server.srvId, entries: historyEntries });
     sendMessage(socket, { type: 'rcon-status', serverId: server.srvId, status: server.getRConStatus() });
     sendMessage(socket, { type: 'server-status', serverId: server.srvId, status: server.getServStatus() });
+    sendMessage(socket, { type: 'player-status', serverId: server.srvId, status: server.getOnlinePlayers() });
     sendMessage(socket, { type: 'schedule-status', serverId: server.srvId, status: SSMan.getSnapshot(server) });
   });
 

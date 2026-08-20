@@ -495,6 +495,7 @@ const renderServerList = (servers) => {
     const rconAuth = createStatusRow('RCON 認証', 'rcon-auth');
     const rconFallback = createStatusRow('stdin フォールバック', 'rcon-fallback');
     const linkedStatus = createStatusRow('連動先', 'linked');
+    const playerStatus = createStatusRow('ログイン中', 'players');
     const rconError = document.createElement('p');
     const consoleTitle = document.createElement('h4');
     const consoleHeader = document.createElement('div');
@@ -509,6 +510,9 @@ const renderServerList = (servers) => {
     const linkedHeader = document.createElement('div');
     const linkedTitle = document.createElement('h4');
     const linkedList = document.createElement('ul');
+    const playersHeader = document.createElement('div');
+    const playersTitle = document.createElement('h4');
+    const playersList = document.createElement('ul');
     const configHeader = document.createElement('div');
     const configTitle = document.createElement('h4');
     const configReloadButton = document.createElement('button');
@@ -849,6 +853,7 @@ const renderServerList = (servers) => {
     consoleView.textContent = 'ログを取得中';
 
     card.className = 'server-card';
+    card.dataset.proxyServer = server.isProxy ? 'true' : 'false';
     cardHeader.className = 'server-card__header';
     statusGrid.className = 'server-status-grid';
 
@@ -865,6 +870,10 @@ const renderServerList = (servers) => {
     linkedList.className = 'server-linked-list server-card__detail-only';
     linkedHeader.hidden = !server.isProxy;
     linkedList.hidden = !server.isProxy;
+    playersHeader.className = 'server-card__section-header server-card__detail-only';
+    playersTitle.textContent = 'ログイン中のプレイヤー';
+    playersHeader.append(playersTitle);
+    playersList.className = 'server-player-list server-card__detail-only';
     configHeader.className = 'server-card__section-header server-card__detail-only';
     configTitle.textContent = 'サーバー設定';
     configReloadButton.type = 'button';
@@ -942,6 +951,8 @@ const renderServerList = (servers) => {
     linkedStatus.row.hidden = !server.isProxy;
     linkedStatus.row.classList.add('server-status-row--linked');
     serverStatus.row.append(linkedStatus.row);
+    playerStatus.row.classList.add('server-status-row--linked');
+    serverStatus.row.append(playerStatus.row);
 
     rconError.hidden = true;
 
@@ -965,6 +976,8 @@ const renderServerList = (servers) => {
       controlNotice,
       linkedHeader,
       linkedList,
+      playersHeader,
+      playersList,
       consoleHeader,
       disconnectRConNotice,
       consoleView,
@@ -993,6 +1006,8 @@ const renderServerList = (servers) => {
       linkedServerIds: Object.freeze([...server.linkedServerIds]),
       linkedStatus: linkedStatus.value,
       linkedList,
+      playerStatus: playerStatus.value,
+      playersList,
       configMeta,
       configFields,
       configNotice,
@@ -1070,6 +1085,39 @@ const updateServerStatus = (serverId, status) => {
   updateServerControlButtons(cardInfo, status);
   updateServerConfigEditability(cardInfo, status);
   updateProxyLinkedServerStatuses();
+};
+
+/** WebSocketで受信したログイン中プレイヤー一覧を、件数と詳細リストへ反映する。 */
+const updateOnlinePlayers = (serverId, status) => {
+  const cardInfo = serverCards.get(serverId);
+
+  if (
+    typeof cardInfo === 'undefined'
+    || typeof status !== 'object'
+    || status === null
+    || !Array.isArray(status.players)
+    || !status.players.every((playerName) => typeof playerName === 'string')
+  ) {
+    return;
+  }
+
+  const players = status.players;
+  cardInfo.playerStatus.textContent = players.length === 0
+    ? '0 名'
+    : `${players.length} 名`;
+  cardInfo.playerStatus.dataset.state = players.length === 0 ? 'disabled' : 'alive';
+
+  const entries = players.length === 0
+    ? ['ログイン中のプレイヤーはいません。']
+    : players;
+  const elements = entries.map((playerName) => {
+    const item = document.createElement('li');
+
+    item.textContent = playerName;
+    return item;
+  });
+
+  cardInfo.playersList.replaceChildren(...elements);
 };
 
 /** RCON接続・認証・stdinフォールバック状態を対象カードへ反映する。 */
@@ -1445,6 +1493,10 @@ const connectWebSocket = async () => {
         // ステータスチェック
         if (message.type === 'server-status') {
           updateServerStatus(message.serverId, message.status);
+          return;
+        }
+        if (message.type === 'player-status') {
+          updateOnlinePlayers(message.serverId, message.status);
           return;
         }
         if (message.type === 'rcon-status') {

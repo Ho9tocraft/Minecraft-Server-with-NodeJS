@@ -47,6 +47,7 @@ export type ServerConfigFormat = 'properties' | 'yaml' | 'toml';
 export type ServerConfigFileInfo = Readonly<{ fileName: 'server.properties' | 'config.yml' | 'velocity.toml', format: ServerConfigFormat }>;
 export type RConStatusSnapshot = Readonly<{ status: RConConnectionState, authed: boolean, fallbacked: boolean, lastError: string | null }>;
 export type ServerStatusSnapshot = Readonly<{ status: RunningStatus, maintenance: boolean, processAlive: boolean }>;
+export type ServerPlayerSnapshot = Readonly<{ players: readonly string[] }>;
 export type ServerMetadata = Readonly<{
   id: string,
   name: string,
@@ -109,6 +110,8 @@ export abstract class MinecraftServerBase extends EventEmitter {
   protected rconReconnectAttempts: number = 0;
   protected rconCommandTimer: NodeJS.Timeout | null = null;
   protected rconInFlightCmd: string | null = null;
+  /** このコントローラーの起動後にログから追跡した、現在接続中のプレイヤー名。 */
+  protected onlinePlayers = new Set<string>();
   /**
    * [PUBLIC] Current MinecraftServerData JSON
    */
@@ -346,6 +349,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
         emitLog(WARN, `CRASHED!? I'll proceed with startup, considering the issue of crash resolved.`);
       }
     }
+    this.clearOnlinePlayers();
     this.runningStat = 'STARTING';
     this.writeCurrentJSONProcStat();
     emitLog(LOG, `The Server Process "${this.srvId}" starting...`);
@@ -524,6 +528,14 @@ export abstract class MinecraftServerBase extends EventEmitter {
       processAlive: this.serverProc !== null && this.serverProc.exitCode === null,
     });
   }
+  /** サーバーログから追跡しているログイン中プレイヤーの一覧を返す。 */
+  public getOnlinePlayers(): ServerPlayerSnapshot {
+    return Object.freeze({
+      players: Object.freeze([...this.onlinePlayers].sort((left, right) => {
+        return left.localeCompare(right, 'en');
+      })),
+    });
+  }
   public getServMDat(): ServerMetadata {
     return Object.freeze({
       id: this.srvId,
@@ -571,6 +583,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
 
     emitLog(LOGLEVEL, line, { optStr: `[${this.srvId}][${source.toUpperCase()}]` });
     this.publishConsoleMessage(source, line);
+    this.observePlayerSessionLog(line);
 
     if (source !== 'stdout' || this.runningStat !== 'STARTING') return;
 
@@ -590,6 +603,36 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.mayMaintenance = true;
       this.writeCurrentJSONProcStat();
     }
+  }
+  /** Minecraft系・Velocity系ログの参加/退出通知から、プレイヤー一覧を更新する。 */
+  protected observePlayerSessionLog(line: string): void {
+    const minecraftMatch = line.match(/\b([A-Za-z0-9_]{3,16})\s+(joined|left) the game\b/i);
+    const velocityMatch = line.match(/\[connected player\]\s+([A-Za-z0-9_]{3,16})(?:\s+\([^)]*\))?\s+has\s+(connected|disconnected)\b/i);
+    const match = minecraftMatch ?? velocityMatch;
+
+    if (match === null) return;
+
+    const playerName = match[1];
+    const action = match[2]?.toLowerCase();
+    if (typeof playerName !== 'string' || typeof action !== 'string') return;
+
+    this.setOnlinePlayer(playerName, action === 'joined' || action === 'connected');
+  }
+  /** 接続状態が変わった場合だけ、WebUI用のプレイヤー一覧イベントを配信する。 */
+  protected setOnlinePlayer(playerName: string, connected: boolean): void {
+    const changed = connected
+      ? !this.onlinePlayers.has(playerName)
+      : this.onlinePlayers.delete(playerName);
+
+    if (connected) this.onlinePlayers.add(playerName);
+    if (changed) this.publishPlayerStatus();
+  }
+  /** 起動・終了時に残存し得るプレイヤー一覧を消去する。 */
+  protected clearOnlinePlayers(): void {
+    if (this.onlinePlayers.size === 0) return;
+
+    this.onlinePlayers.clear();
+    this.publishPlayerStatus();
   }
   /* ---- COMMAND PUBLISHER ---- */
   protected publishConsoleMessage(source: LogSource, rawMsg: string): void {
@@ -788,6 +831,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.rconClient.LastError = null;
       this.rconInFlightCmd = null;
       this.rconClient.QueuedCmds = [];
+      this.clearOnlinePlayers();
 
       this.publishRConStatus();
       this.requestFlag.stop = false;
@@ -1240,7 +1284,10 @@ export abstract class MinecraftServerBase extends EventEmitter {
   }
   protected publishServerStatus(): void {
     this.emit('server-status', this.getServStatus());
-  };
+  }
+  protected publishPlayerStatus(): void {
+    this.emit('player-status', this.getOnlinePlayers());
+  }
 };
 
 export class MinecraftServer extends MinecraftServerBase {
