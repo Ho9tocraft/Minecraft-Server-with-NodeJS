@@ -1,4 +1,4 @@
-import { IncomingMessage, type Server } from 'http';
+import { IncomingMessage } from 'http';
 import { type Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
@@ -21,6 +21,7 @@ import {
   type ServerConfigSnapshot,
 } from './mcsc_server_config.mjs';
 import { type MCSCWebSocketAccess } from './mcsc_websocket.mjs';
+import { type MCSCWebServer } from './mcsc_webserv.mjs';
 
 type MCSCWSServerErrorMsg = 'server_not_found' | 'server_not_running';
 type MCSCWebSocketBridgeOpt = Readonly<{ origin: string, webSockAccess: MCSCWebSocketAccess, servers: readonly MinecraftServerBase[] }>;
@@ -550,7 +551,7 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
   return (): void => { unsubscribeFunc.forEach((unsub) => { unsub(); }) };
 }
 
-export const installMCSCWebSocketBridge = (httpServer: Server, options: MCSCWebSocketBridgeOpt): MCSCWebSocketBridge => {
+export const installMCSCWebSocketBridge = (httpServer: MCSCWebServer, options: MCSCWebSocketBridgeOpt): MCSCWebSocketBridge => {
   const webSocketServer = new WebSocketServer({
     noServer: true,
     clientTracking: false,

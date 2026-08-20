@@ -1,11 +1,12 @@
 import { resolve } from 'path';
-import type { MCSCHTTPServOpt } from './mcsc_webserv.mjs';
+import type { MCSCHTTPServOpt, MCSCTLSOptions } from './mcsc_webserv.mjs';
 import type { MCSCSessionOptions } from './mcsc_session.mjs';
 
 export type MCSCTrustProxy = false | string;
 export type MCSCWebConfig = Readonly<{
   origin: string,
   http: MCSCHTTPServOpt,
+  tls: MCSCTLSOptions | null,
   session: MCSCSessionOptions,
   initialAdmin: Readonly<{
     username: string,
@@ -22,6 +23,11 @@ const requireEnv = (name: string, env: NodeJS.ProcessEnv): string => {
   }
 
   return value;
+};
+
+const optionalEnv = (name: string, env: NodeJS.ProcessEnv): string | null => {
+  const value = env[name]?.trim();
+  return typeof value === 'undefined' || value.length === 0 ? null : value;
 };
 
 const parsePort = (rawPort: string): number => {
@@ -54,6 +60,14 @@ export const loadMCSCWebConfig = (
 ): MCSCWebConfig => {
   const host = requireEnv('MCSC_WEB_HOST', env);
   const port = parsePort(requireEnv('MCSC_WEB_PORT', env));
+  const certificateFile = optionalEnv('MCSC_TLS_CERT_FILE', env);
+  const privateKeyFile = optionalEnv('MCSC_TLS_KEY_FILE', env);
+  if ((certificateFile === null) !== (privateKeyFile === null)) {
+    throw new Error('MCSC_TLS_CERT_FILE and MCSC_TLS_KEY_FILE must either both be set or both be empty.');
+  }
+  const tls = certificateFile === null || privateKeyFile === null
+    ? null
+    : Object.freeze({ certificateFile: resolve(certificateFile), privateKeyFile: resolve(privateKeyFile) });
   const secret = requireEnv('MCSC_SESSION_SECRET', env);
   const directory = resolve(requireEnv('MCSC_SESSION_DIR', env));
   const secureCookie = parseBoolean(
@@ -86,10 +100,14 @@ export const loadMCSCWebConfig = (
     if (!isLoopbackHost(host)) throw new Error('MCSC_COOKIE_SECURE=false is permitted only for localhost / loopback hosts.');
     if (originUrl.protocol !== 'http:') throw new Error('MCSC_COOKIE_SECURE=false requires an http:// MCSC_WEB_ORIGIN.');
   }
+  if (tls !== null && originUrl.protocol !== 'https:') {
+    throw new Error('Direct TLS requires an https:// MCSC_WEB_ORIGIN.');
+  }
 
   return Object.freeze({
     origin: originUrl.origin,
     http: Object.freeze({ host, port }),
+    tls,
     session: Object.freeze({ secret, directory, secureCookie }),
     initialAdmin: Object.freeze({ username, passHash }),
     trustProxy: parseTrustProxy(requireEnv('MCSC_TRUST_PROXY', env)),
