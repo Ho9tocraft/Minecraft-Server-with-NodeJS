@@ -391,6 +391,30 @@ export abstract class MinecraftServerBase extends EventEmitter {
       this.instantRCONCommand(this.stopCmd);
     }
   }
+  /** ホストOSの停止時に、再起動予約を破棄してサーバーの正常停止を要求する。 */
+  public stopForHostShutdown(): void {
+    this.requestFlag.reboot = false;
+
+    const currentStatus = this.getServStatus();
+    if (!currentStatus.processAlive) return;
+
+    if (currentStatus.status === 'RUNNING') {
+      this.stopServer();
+      return;
+    }
+
+    const stopWhenReady = (nextStatus: ServerStatusSnapshot): void => {
+      if (!nextStatus.processAlive || nextStatus.status !== 'RUNNING') {
+        if (!nextStatus.processAlive) this.off('server-status', stopWhenReady);
+        return;
+      }
+
+      this.off('server-status', stopWhenReady);
+      this.stopServer();
+    };
+
+    this.on('server-status', stopWhenReady);
+  }
   public restartServer(): void {
     if (this.serverProc === null || this.runningStat !== 'RUNNING') return;
     this.requestFlag.reboot = true;

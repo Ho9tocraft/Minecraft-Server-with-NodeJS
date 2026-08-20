@@ -2,6 +2,7 @@ import { parseArgs } from 'util';
 import { coreModuleInitProcess, initGlobalThisVariables } from './js/core_process.mjs';
 import { MinecraftServerBase } from './js/minecraft/servers.mjs';
 import { ignitionMCSCWebUI } from './js/mcserv_controller/mcsc_bootstrap.mjs';
+import { installMCSCGracefulShutdown } from './js/mcserv_controller/mcsc_shutdown.mjs';
 const { main } = import.meta;
 
 declare global {
@@ -164,7 +165,11 @@ const runMain = async (enableWebUI: boolean): Promise<number> => {
   try {
     coreModuleInitProcess();
 
-    if (enableWebUI) await ignitionMCSCWebUI();
+    if (enableWebUI) {
+      const webUI = await ignitionMCSCWebUI();
+
+      installMCSCGracefulShutdown(webUI);
+    }
     return 0;
   }
   catch (err) {

@@ -31,3 +31,13 @@
   7. 簡素なJSON文字列を作成する。
   8. 作成したJSON文字列を、外部サイトを使って**Base64**に変換。
   9. 本プログラムのdataディレクトリ内にある、*server_data.json*を編集する。
+
+### systemdによる常駐運用
+
+[`systemd/mcserv-controller.service.example`](systemd/mcserv-controller.service.example) を `/etc/systemd/system/mcserv-controller.service` へ配置する前に、次の値を実環境の値へ置換します。
+
+- `User` と `Group`: **root以外**の、専用運用ユーザー
+- `WorkingDirectory`: プロジェクトの絶対パス
+- `ExecStart`: 当該ユーザーが所有するNode.js実行ファイルの絶対パス
+
+`nvm` はsystemdから自動では読み込まれないため、`ExecStart` に `node` や `nvm` の相対パスは使えません。ユニットは `SIGTERM` を受けると、WebUIの受付を止めてから各Minecraftサーバーの正常停止を待機します。`TimeoutStopSec=210s` はこの待機時間です。

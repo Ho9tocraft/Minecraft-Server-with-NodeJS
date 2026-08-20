@@ -1,0 +1,35 @@
+[Unit]
+Description=Minecraft Server Controller WebUI
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+
+# 必ずroot以外の、Minecraft Server Controller専用ユーザーへ置き換えること。
+# 未置換のままでは存在しないユーザーとして起動に失敗するため、rootでの誤起動はしない。
+User=__MCSC_USER__
+Group=__MCSC_GROUP__
+
+# 配置先へ置き換えること。User/Groupが読み書きできるディレクトリだけを指定する。
+WorkingDirectory=/srv/mcserv-controller
+
+# nvmはsystemdから自動読込されない。対象ユーザーが所有するNode.js実行ファイルの絶対パスへ置き換えること。
+ExecStart=/home/__MCSC_USER__/.nvm/versions/node/v26.7.0/bin/node --env-file=./mcsc_webui.env ./dist/index.mjs --webui
+
+Environment=NODE_ENV=production
+Restart=on-failure
+RestartSec=5s
+
+# 初回SIGTERMはNode.js本体だけへ届け、MCSCがMinecraftサーバーを正常停止する猶予を与える。
+# Timeout後だけ、残存するプロセスグループをsystemdが強制終了する。
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=210s
+
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
