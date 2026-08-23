@@ -80,11 +80,15 @@ const setButtonContent = (button, label, iconName) => {
 let activeWebSocket = null;
 const serverCards = new Map();
 const MaxConsoleEntries = 400;
+const ConsoleRenderIntervalMs = 250;
+const ConsoleAutoScrollThresholdPx = 24;
 const ConsoleLogLevels = new Set([
   'DEBUG', 'INFO', 'STDOUT', 'WARN', 'ERROR', 'FATAL',
 ]);
 let webSocketConnecting = false;
 let selectedServerId = null;
+const pendingConsoleRenderServerIds = new Set();
+let consoleRenderTimer = null;
 
 /** 詳細表示中のカードを一覧へ戻し、ダッシュボード表示へ切り替える。 */
 const showDashboard = () => {
@@ -112,6 +116,7 @@ const showServerDetail = (serverId) => {
   dashboardView.hidden = true;
   serverDetailView.hidden = false;
   serverDetailContent.replaceChildren(cardInfo.card);
+  renderConsole(serverId, true);
 
   window.scrollTo({
     top: 0,
@@ -1018,6 +1023,9 @@ const renderServerList = (servers) => {
       processAlive: processAlive.value,
       serverStatus: serverStatus.value,
       consoleEntries: [],
+      consoleFullRender: true,
+      consolePendingEntries: [],
+      consolePendingTrim: 0,
       consoleView,
       startButton,
       stopButton,
@@ -1362,7 +1370,62 @@ const formatConsoleEntry = (entry) => {
   };
 };
 
-/** コンソール履歴を初期置換または追記し、保持件数を制限して末尾へスクロールする。 */
+/** 表示対象のコンソールだけを、短い間隔でまとめてDOMへ反映する。 */
+const scheduleConsoleRender = (serverId) => {
+  pendingConsoleRenderServerIds.add(serverId);
+
+  if (consoleRenderTimer !== null) return;
+
+  consoleRenderTimer = setTimeout(() => {
+    consoleRenderTimer = null;
+
+    pendingConsoleRenderServerIds.forEach((pendingServerId) => {
+      if (selectedServerId === pendingServerId) renderConsole(pendingServerId, false);
+    });
+    pendingConsoleRenderServerIds.clear();
+  }, ConsoleRenderIntervalMs);
+};
+
+/** ログエントリからコンソール用の1行DOMを作成する。 */
+const createConsoleLine = (entry) => {
+  const line = document.createElement('span');
+
+  line.className = `server-console__line server-console__line--${entry.level.toLowerCase()}`;
+  line.textContent = entry.text;
+  return line;
+};
+
+/** 保留中のログだけを追記し、必要な時だけ先頭行を捨てる。 */
+const renderConsole = (serverId, forceFullRender) => {
+  const cardInfo = serverCards.get(serverId);
+  if (typeof cardInfo === 'undefined') return;
+
+  const { consoleView } = cardInfo;
+  const isNearBottom = consoleView.scrollHeight - consoleView.scrollTop - consoleView.clientHeight
+    <= ConsoleAutoScrollThresholdPx;
+
+  if (forceFullRender || cardInfo.consoleFullRender) {
+    const consoleLines = document.createDocumentFragment();
+    cardInfo.consoleEntries.forEach((entry) => { consoleLines.append(createConsoleLine(entry)); });
+    consoleView.replaceChildren(consoleLines);
+  } else {
+    for (let index = 0; index < cardInfo.consolePendingTrim; index += 1) {
+      consoleView.firstElementChild?.remove();
+    }
+
+    const consoleLines = document.createDocumentFragment();
+    cardInfo.consolePendingEntries.forEach((entry) => { consoleLines.append(createConsoleLine(entry)); });
+    consoleView.append(consoleLines);
+  }
+
+  cardInfo.consoleFullRender = false;
+  cardInfo.consolePendingEntries = [];
+  cardInfo.consolePendingTrim = 0;
+
+  if (isNearBottom || forceFullRender) consoleView.scrollTop = consoleView.scrollHeight;
+};
+
+/** コンソール履歴を初期置換または追記し、保持件数を制限する。 */
 const updateConsole = (serverId, entries, replace) => {
   const cardInfo = serverCards.get(serverId);
 
@@ -1376,27 +1439,28 @@ const updateConsole = (serverId, entries, replace) => {
 
   if (replace) {
     cardInfo.consoleEntries = formattedEntries;
+    cardInfo.consoleFullRender = true;
+    cardInfo.consolePendingEntries = [];
+    cardInfo.consolePendingTrim = 0;
   } else {
     cardInfo.consoleEntries.push(...formattedEntries);
+    if (!cardInfo.consoleFullRender) cardInfo.consolePendingEntries.push(...formattedEntries);
   }
 
+  let trimmedEntries = 0;
   if (cardInfo.consoleEntries.length > MaxConsoleEntries) {
+    trimmedEntries = cardInfo.consoleEntries.length - MaxConsoleEntries;
     cardInfo.consoleEntries.splice(
       0,
-      cardInfo.consoleEntries.length - MaxConsoleEntries,
+      trimmedEntries,
     );
   }
 
-  const consoleLines = cardInfo.consoleEntries.map((entry) => {
-    const line = document.createElement('span');
+  if (trimmedEntries > 0 && !cardInfo.consoleFullRender) {
+    cardInfo.consolePendingTrim += trimmedEntries;
+  }
 
-    line.className = `server-console__line server-console__line--${entry.level.toLowerCase()}`;
-    line.textContent = entry.text;
-    return line;
-  });
-
-  cardInfo.consoleView.replaceChildren(...consoleLines);
-  cardInfo.consoleView.scrollTop = cardInfo.consoleView.scrollHeight;
+  if (selectedServerId === serverId) scheduleConsoleRender(serverId);
 };
 
 /** ログアウト時にWebSocket・再接続予約・サーバーカードを破棄して初期状態へ戻す。 */
@@ -1407,6 +1471,11 @@ const clearAuthenticatedView = () => {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  if (consoleRenderTimer !== null) {
+    clearTimeout(consoleRenderTimer);
+    consoleRenderTimer = null;
+  }
+  pendingConsoleRenderServerIds.clear();
 
   if (activeWebSocket !== null) {
     activeWebSocket.close(1000, 'Logout');
@@ -1571,8 +1640,8 @@ const connectWebSocket = async () => {
           updateConsole(message.serverId, message.entries, true);
           return;
         }
-        if (message.type === 'console-output') {
-          updateConsole(message.serverId, [message.entry], false);
+        if (message.type === 'console-output-batch') {
+          updateConsole(message.serverId, message.entries, false);
           return;
         }
 

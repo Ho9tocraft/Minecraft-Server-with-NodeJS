@@ -31,8 +31,12 @@ type MCSCWebSocketInfo = Readonly<{
   MaxPayloadBytes: number,
   BufferedBytes: number,
   InitHistoryEntries: number,
+  ConsoleFlushIntervalMs: number,
+  MaxConsoleBatchEntries: number,
+  MaxConsoleBatchChars: number,
   HBInterval: number
 }>;
+type PendingConsoleBatch = { entries: ServerConsoleMessage[], chars: number };
 type MCSCWebSocketMessage =
   | Readonly<{ type: 'hello', username: string }>
   | Readonly<{ type: 'server-list', servers: readonly ServerMetadata[] }>
@@ -43,7 +47,7 @@ type MCSCWebSocketMessage =
   | Readonly<{ type: 'maintenance-submitted', serverId: string, enabled: boolean }>
   | Readonly<{ type: 'maintenance-rejected', serverId: string, error: MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'console-history', serverId: string, entries: readonly ServerConsoleMessage[] }>
-  | Readonly<{ type: 'console-output', serverId: string, entry: ServerConsoleMessage }>
+  | Readonly<{ type: 'console-output-batch', serverId: string, entries: readonly ServerConsoleMessage[] }>
   | Readonly<{ type: 'rcon-status', serverId: string, status: RConStatusSnapshot }>
   | Readonly<{ type: 'schedule-status', serverId: string, status: ServerScheduleSnapshot }>
   | Readonly<{ type: 'schedule-submitted', serverId: string, status: ServerScheduleSnapshot }>
@@ -88,6 +92,9 @@ const WebSocketInfomations: MCSCWebSocketInfo = {
   MaxPayloadBytes: 4 * 1024,
   BufferedBytes: 1024 * 1024,
   InitHistoryEntries: 50,
+  ConsoleFlushIntervalMs: 250,
+  MaxConsoleBatchEntries: 100,
+  MaxConsoleBatchChars: 64 * 1024,
   HBInterval: 30 * 1000,
 };
 
@@ -503,10 +510,46 @@ const sendMessage = (socket: WebSocket, message: MCSCWebSocketMessage): void => 
 
 const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftServerBase[]): (() => void) => {
   const unsubscribeFunc: Array<() => void> = [];
+  const pendingConsoleEntries = new Map<string, PendingConsoleBatch>();
+  let consoleFlushTimer: NodeJS.Timeout | null = null;
+
+  const flushConsoleEntries = (): void => {
+    consoleFlushTimer = null;
+
+    pendingConsoleEntries.forEach((batch, serverId) => {
+      sendMessage(socket, { type: 'console-output-batch', serverId, entries: batch.entries });
+    });
+    pendingConsoleEntries.clear();
+  };
+  const queueConsoleEntry = (serverId: string, entry: ServerConsoleMessage): void => {
+    let batch = pendingConsoleEntries.get(serverId);
+    if (typeof batch === 'undefined') {
+      batch = { entries: [], chars: 0 };
+      pendingConsoleEntries.set(serverId, batch);
+    }
+
+    const entryChars = entry.at.length + entry.source.length + entry.level.length + entry.message.length + 64;
+    while (batch.entries.length > 0 && (
+      batch.entries.length >= WebSocketInfomations.MaxConsoleBatchEntries
+      || batch.chars + entryChars > WebSocketInfomations.MaxConsoleBatchChars
+    )) {
+      const removed = batch.entries.shift();
+      if (typeof removed !== 'undefined') {
+        batch.chars -= removed.at.length + removed.source.length + removed.level.length + removed.message.length + 64;
+      }
+    }
+    batch.entries.push(entry);
+    batch.chars += entryChars;
+
+    if (consoleFlushTimer === null) {
+      consoleFlushTimer = setTimeout(flushConsoleEntries, WebSocketInfomations.ConsoleFlushIntervalMs);
+      consoleFlushTimer.unref();
+    }
+  };
 
   servers.forEach((server) => {
     const onConsoleOut = (entry: ServerConsoleMessage): void => {
-      sendMessage(socket, { type: 'console-output', serverId: server.srvId, entry: entry });
+      queueConsoleEntry(server.srvId, entry);
     };
     const onRConStatus = (status: RConStatusSnapshot): void => {
       sendMessage(socket, { type: 'rcon-status', serverId: server.srvId, status: status });
@@ -548,7 +591,11 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
     sendMessage(socket, { type: 'schedule-status', serverId: server.srvId, status: SSMan.getSnapshot(server) });
   });
 
-  return (): void => { unsubscribeFunc.forEach((unsub) => { unsub(); }) };
+  return (): void => {
+    if (consoleFlushTimer !== null) clearTimeout(consoleFlushTimer);
+    pendingConsoleEntries.clear();
+    unsubscribeFunc.forEach((unsub) => { unsub(); });
+  };
 }
 
 export const installMCSCWebSocketBridge = (httpServer: MCSCWebServer, options: MCSCWebSocketBridgeOpt): MCSCWebSocketBridge => {
