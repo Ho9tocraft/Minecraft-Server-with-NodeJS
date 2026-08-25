@@ -26,10 +26,14 @@ const emitScheduledLog = (serv: MinecraftServerBase, msg: string, isError: boole
 };
 
 const runStart = (serv: MinecraftServerBase): void => {
-  const { processAlive } = serv.getServStatus();
+  const { maintenance, processAlive } = serv.getServStatus();
 
   if (processAlive) {
     emitScheduledLog(serv, 'Scheduled start skipped: Process is already alive.');
+    return;
+  }
+  if (maintenance) {
+    emitScheduledLog(serv, 'Scheduled start skipped: Maintenance mode is enabled.');
     return;
   }
 
@@ -38,8 +42,13 @@ const runStart = (serv: MinecraftServerBase): void => {
 };
 
 const runRebootMotd = (serv: MinecraftServerBase): void => {
-  if (serv.getServStatus().status !== 'RUNNING') {
+  const { maintenance, status } = serv.getServStatus();
+  if (status !== 'RUNNING') {
     emitScheduledLog(serv, 'Scheduled reboot warning skipped: Server is not running.');
+    return;
+  }
+  if (maintenance) {
+    emitScheduledLog(serv, 'Scheduled reboot warning skipped: Maintenance mode is enabled.');
     return;
   }
 
@@ -48,8 +57,13 @@ const runRebootMotd = (serv: MinecraftServerBase): void => {
 };
 
 const runRebootExec = (serv: MinecraftServerBase): void => {
-  if (serv.getServStatus().status !== 'RUNNING') {
+  const { maintenance, status } = serv.getServStatus();
+  if (status !== 'RUNNING') {
     emitScheduledLog(serv, 'Scheduled reboot execute skipped: Server is not running.');
+    return;
+  }
+  if (maintenance) {
+    emitScheduledLog(serv, 'Scheduled reboot execute skipped: Maintenance mode is enabled.');
     return;
   }
 
