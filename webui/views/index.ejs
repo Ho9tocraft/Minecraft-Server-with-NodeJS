@@ -80,6 +80,18 @@
         <p id="notice" role="status" aria-live="polite"></p>
       </section>
 
+      <dialog id="force-stop-dialog" class="force-stop-dialog" aria-labelledby="force-stop-dialog-title"
+        aria-describedby="force-stop-dialog-description">
+        <section class="force-stop-dialog__content">
+          <h2 id="force-stop-dialog-title"><span class="material-icons" aria-hidden="true">warning</span>強制停止を実行しますか？</h2>
+          <p id="force-stop-dialog-description"><strong id="force-stop-server-name"></strong>へ停止コマンドを送らず、プロセスを即時終了します。ワールドデータなどが破損するおそれがあります。</p>
+          <div class="force-stop-dialog__actions">
+            <button id="force-stop-cancel" type="button">キャンセル</button>
+            <button id="force-stop-confirm" class="force-stop-dialog__confirm" type="button">強制停止する</button>
+          </div>
+        </section>
+      </dialog>
+
     </main>
   </div>
 

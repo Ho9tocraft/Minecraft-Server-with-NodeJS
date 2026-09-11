@@ -46,7 +46,7 @@ type MCSCWebSocketMessage =
   | Readonly<{ type: 'server-list', servers: readonly ServerMetadata[] }>
   | Readonly<{ type: 'server-status', serverId: string, status: ServerStatusSnapshot }>
   | Readonly<{ type: 'player-status', serverId: string, status: ServerPlayerSnapshot }>
-  | Readonly<{ type: 'server-control-submitted', serverId: string, action: 'start' | 'stop' | 'restart' }>
+  | Readonly<{ type: 'server-control-submitted', serverId: string, action: 'start' | 'stop' | 'restart' | 'force-stop' }>
   | Readonly<{ type: 'server-control-rejected', serverId: string, error: 'server_already_active' | 'maintenance_locked' | MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'maintenance-submitted', serverId: string, enabled: boolean }>
   | Readonly<{ type: 'maintenance-rejected', serverId: string, error: MCSCWSServerErrorMsg }>
@@ -67,7 +67,7 @@ type MCSCWebSocketMessage =
   | Readonly<{ type: 'rcon-disconnect-rejected', serverId: string, error: 'rcon_unavailable' | MCSCWSServerErrorMsg }>;
 type MCSCWebSocketCmdBatch = Readonly<{ type: 'command-batch', serverId: string, cmds: readonly string[] }>;
 type MCSCWebSocketRConDisconnect = Readonly<{ type: 'rcon-disconnect', serverId: string }>;
-type MCSCWebSocketServerControl = Readonly<{ type: 'server-control', serverId: string, act: 'start' | 'stop' | 'restart' }>;
+type MCSCWebSocketServerControl = Readonly<{ type: 'server-control', serverId: string, act: 'start' | 'stop' | 'restart' | 'force-stop' }>;
 type MCSCWebSocketMaintenanceSet = Readonly<{ type: 'maintenance-set', serverId: string, enabled: boolean }>;
 type MCSCWebSocketScheduleSet = Readonly<{ type: 'schedule-set', serverId: string, schedule: ServerScheduleUpdate }>;
 type MCSCWebSocketConfigGet = Readonly<{ type: 'config-get', serverId: string }>;
@@ -251,7 +251,7 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
       }),
     });
   }
-  if (type === 'server-control' && (act === 'start' || act === 'stop' || act === 'restart')) return Object.freeze({
+  if (type === 'server-control' && (act === 'start' || act === 'stop' || act === 'restart' || act === 'force-stop')) return Object.freeze({
     type: 'server-control',
     serverId: serverId,
     act: act
@@ -503,6 +503,17 @@ const handleServControl = (socket: WebSocket, controlReq: MCSCWebSocketServerCon
     }
 
     tgtServ.startServer();
+  } else if (act === 'force-stop') {
+    if (!tgtServ.getServStatus().processAlive) {
+      sendMessage(socket, {
+        type: 'server-control-rejected',
+        serverId: serverId,
+        error: 'server_not_running'
+      });
+      return;
+    }
+
+    tgtServ.forceStopServer();
   } else {
     if (tgtServ.runningStat !== 'RUNNING') {
       sendMessage(socket, {

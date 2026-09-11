@@ -89,6 +89,7 @@ const RConMaxReconnectAttempts = 3;
 const RConConnectionTimeout = 10 * 1000;
 const RConCommandResponseTimeout = 30 * 1000;
 const RConIdleTimeout = 15 * 60 * 1000;
+const ServerStartTimeout = 30 * 60 * 1000;
 const ConsoleDefinition = {
   MaxHistoryRecord: 400,
   MaxMessageChars: MaxCommandPacketLength,
@@ -154,6 +155,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
    * [PROTECTED] Server stop timer
    */
   protected stopTimer: NodeJS.Timeout | null = null;
+  protected startTimer: NodeJS.Timeout | null = null;
   protected rconConnTimer: NodeJS.Timeout | null = null;
   protected rconIdleTimer: NodeJS.Timeout | null = null;
   protected consoleHistory: ServerConsoleMessage[] = [];
@@ -472,6 +474,34 @@ export abstract class MinecraftServerBase extends EventEmitter {
     this.requestFlag.reboot = true;
     this.stopServer();
   }
+  /** 正常終了を待たず、現在のサーバープロセスを強制終了する。 */
+  public forceStopServer(): void {
+    const proc = this.serverProc;
+    const { FATAL, WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+
+    if (proc === null || proc.exitCode !== null) return;
+
+    this.clearStopTimer();
+    this.clearStartTimer();
+    this.requestFlag.stop = false;
+    this.requestFlag.reboot = false;
+    this.requestFlag.forcedStop = true;
+    emitLog(WARN, `The server "${this.srvId}" was requested to force-stop.`);
+
+    try {
+      const killed = proc.kill('SIGKILL');
+      if (!killed) throw new AggregateError([
+        new EvalError('Terminating Signals could not sending!'),
+        new Error('Force-stop failed: this server is DEPLETED.')
+      ], 'Force-stop failed.');
+    } catch (err) {
+      this.requestFlag.forcedStop = false;
+      this.runningStat = 'DEPLETED';
+      this.mayMaintenance = true;
+      this.writeCurrentJSONProcStat();
+      emitLog(FATAL, `FAILED to force-terminate server "${this.srvId}": ${err}\nPlease use root permission console.`);
+    }
+  }
   public setMaintenanceMode(enabled: boolean): void {
     if (typeof enabled !== 'boolean') {
       throw new TypeError('Maintenance Mode must be a boolean.');
@@ -714,6 +744,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
     if (startedRegExp.test(line)) {
       emitLog(LOG, `The ${!this.rconCompatible ? 'Proxy ' : ''}Server Process "${this.srvId}" starting up success.`);
 
+      this.clearStartTimer();
       this.runningStat = 'RUNNING';
       this.runningResult.rStart = true;
       if (this.rconCompatible) this.initRconClient();
@@ -722,6 +753,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
     }
 
     if (this.detectCrash(line)) {
+      this.clearStartTimer();
       emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server "${this.srvId}" starting up FAILED.`));
       this.runningStat = 'CRASHED';
       this.mayMaintenance = true;
@@ -934,6 +966,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
 
     this.serverProc.on('error', () => {
       this.clearStopTimer();
+      this.clearStartTimer();
       emitLog(ERROR, this.autoMaintenanceModeMessage(`The Server Process "${this.srvId}" starting up FAILED.`));
       this.serverProc = null;
       this.runningStat = 'CRASHED';
@@ -943,6 +976,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
       const forcedStop = this.requestFlag.forcedStop;
 
       this.clearStopTimer();
+      this.clearStartTimer();
       this.requestFlag.forcedStop = false;
       const gracefulStop = this.requestFlag.stop && code === 0 && signal === null;
       if (this.serverProc !== null) this.serverProc.stdin?.end();
@@ -993,6 +1027,8 @@ export abstract class MinecraftServerBase extends EventEmitter {
 
       this.writeCurrentJSONProcStat();
     });
+
+    this.runStartTimer(this.serverProc);
   }
   /* ---- RCON / COMMANDS ---- */
   protected initRconClient(): void {
@@ -1229,6 +1265,38 @@ export abstract class MinecraftServerBase extends EventEmitter {
       clearTimeout(this.stopTimer);
     }
     this.stopTimer = null;
+  }
+  protected clearStartTimer(): void {
+    if (this.startTimer !== null) clearTimeout(this.startTimer);
+    this.startTimer = null;
+  }
+  /** STARTINGが長時間継続したプロセスを、起動時ハングとして強制終了する。 */
+  protected runStartTimer(proc: ChildProcess): void {
+    const { FATAL, WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;
+
+    this.clearStartTimer();
+    this.startTimer = setTimeout(() => {
+      if (this.serverProc !== proc || proc.exitCode !== null || this.runningStat !== 'STARTING') return;
+
+      this.requestFlag.stop = false;
+      this.requestFlag.reboot = false;
+      this.requestFlag.forcedStop = true;
+      emitLog(WARN, `The server "${this.srvId}" did not complete startup within 30 minutes. Force-terminating!`);
+
+      try {
+        const killed = proc.kill('SIGKILL');
+        if (!killed) throw new AggregateError([
+          new EvalError('Terminating Signals could not sending!'),
+          new Error('Startup timeout termination failed: this server is DEPLETED.')
+        ], 'Startup timeout termination failed.');
+      } catch (err) {
+        this.requestFlag.forcedStop = false;
+        this.runningStat = 'DEPLETED';
+        this.mayMaintenance = true;
+        this.writeCurrentJSONProcStat();
+        emitLog(FATAL, `FAILED to terminate startup-timed-out server "${this.srvId}": ${err}\nPlease use root permission console.`);
+      }
+    }, ServerStartTimeout);
   }
   protected runStopTimer(proc: ChildProcess): void {
     const { FATAL, WARN } = globalThis.MCSERV_CONTROLLER_ENV.LOGGING_PREFIXES;

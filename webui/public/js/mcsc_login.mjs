@@ -21,6 +21,11 @@ const serverDetailTitle = document.querySelector('#server-detail-title');
 const serverDetailView = document.querySelector('#server-detail-view');
 const logoutSubmit = document.querySelector('#logout-submit');
 const navigationItems = document.querySelectorAll('[data-scroll-target]');
+const forceStopDialog = document.querySelector('#force-stop-dialog');
+const forceStopCancel = document.querySelector('#force-stop-cancel');
+const forceStopConfirm = document.querySelector('#force-stop-confirm');
+const forceStopServerName = document.querySelector('#force-stop-server-name');
+let forceStopTargetServerId = null;
 
 /** サイドバーメニューの選択表示を、操作した項目だけへ更新する。 */
 const setActiveNavigation = (activeItem) => {
@@ -228,6 +233,7 @@ const updateServerControlButtons = (cardInfo, status) => {
   cardInfo.startButton.disabled = !canStart;
   cardInfo.stopButton.disabled = !status.processAlive;
   cardInfo.restartButton.disabled = status.status !== 'RUNNING';
+  cardInfo.forceStopButton.disabled = !status.processAlive;
   cardInfo.maintenanceButton.disabled = false;
   setButtonContent(
     cardInfo.maintenanceButton,
@@ -257,11 +263,13 @@ const submitServerControl = (serverId, action) => {
   cardInfo.startButton.disabled = true;
   cardInfo.stopButton.disabled = true;
   cardInfo.restartButton.disabled = true;
+  cardInfo.forceStopButton.disabled = true;
 
   const actionNames = {
     start: '起動',
     stop: '停止',
     restart: '再起動',
+    'force-stop': '強制停止',
   };
 
   cardInfo.controlNotice.textContent =
@@ -293,6 +301,33 @@ const setScheduleOverrideInputsDisabled = (
   motdInput.disabled = disabled;
   execInput.disabled = disabled;
 };
+
+/** 強制停止確認ダイアログを開く。 */
+const showForceStopDialog = (serverId) => {
+  const cardInfo = serverCards.get(serverId);
+  if (typeof cardInfo === 'undefined') return;
+
+  forceStopTargetServerId = serverId;
+  forceStopServerName.textContent = `「${cardInfo.name}」`;
+  forceStopDialog.showModal();
+};
+
+forceStopCancel.addEventListener('click', () => {
+  forceStopTargetServerId = null;
+  forceStopDialog.close();
+});
+
+forceStopConfirm.addEventListener('click', () => {
+  const serverId = forceStopTargetServerId;
+  forceStopTargetServerId = null;
+  forceStopDialog.close();
+
+  if (serverId !== null) submitServerControl(serverId, 'force-stop');
+});
+
+forceStopDialog.addEventListener('cancel', () => {
+  forceStopTargetServerId = null;
+});
 
 /** Velocityの関連先一覧を通常のサーバー状態から再計算し、表示だけを更新する。 */
 const updateProxyLinkedServerStatuses = () => {
@@ -565,6 +600,7 @@ const renderServerList = (servers) => {
     const startButton = document.createElement('button');
     const stopButton = document.createElement('button');
     const restartButton = document.createElement('button');
+    const forceStopButton = document.createElement('button');
     const maintenanceButton = document.createElement('button');
     const controlNotice = document.createElement('p');
     const linkedHeader = document.createElement('div');
@@ -664,6 +700,11 @@ const renderServerList = (servers) => {
     setButtonContent(restartButton, '再起動', 'autorenew');
     restartButton.disabled = true;
 
+    forceStopButton.type = 'button';
+    forceStopButton.className = 'server-force-stop server-card__detail-only';
+    setButtonContent(forceStopButton, '強制停止', 'dangerous');
+    forceStopButton.disabled = true;
+
     maintenanceButton.type = 'button';
     maintenanceButton.className = 'server-maintenance-toggle';
     setButtonContent(maintenanceButton, 'メンテナンス有効化', 'construction');
@@ -710,7 +751,13 @@ const renderServerList = (servers) => {
       submitServerControl(server.id, 'restart');
     });
 
-    controlButtons.append(startButton, stopButton, restartButton, maintenanceButton);
+    forceStopButton.addEventListener('click', () => {
+      const cardInfo = serverCards.get(server.id);
+      if (typeof cardInfo === 'undefined' || !cardInfo.lastServerStatus?.processAlive) return;
+      showForceStopDialog(server.id);
+    });
+
+    controlButtons.append(startButton, stopButton, restartButton, maintenanceButton, forceStopButton);
 
     scheduleTitle.textContent = 'cron管理';
     scheduleList.className = 'server-schedule-list server-card__detail-only';
@@ -1166,6 +1213,7 @@ const renderServerList = (servers) => {
       startButton,
       stopButton,
       restartButton,
+      forceStopButton,
       maintenanceButton,
       controlNotice,
       lastServerStatus: null,
@@ -1622,6 +1670,8 @@ const clearAuthenticatedView = () => {
   authenticatedUser.textContent = '';
 
   selectedServerId = null;
+  forceStopTargetServerId = null;
+  if (forceStopDialog.open) forceStopDialog.close();
   serverDetailContent.replaceChildren();
   serverDetailView.hidden = true;
   dashboardView.hidden = false;
@@ -1873,6 +1923,7 @@ const connectWebSocket = async () => {
               start: '起動',
               stop: '停止',
               restart: '再起動',
+              'force-stop': '強制停止',
             };
 
             cardInfo.controlNotice.textContent =
