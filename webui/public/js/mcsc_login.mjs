@@ -117,6 +117,7 @@ const showServerDetail = (serverId) => {
   serverDetailView.hidden = false;
   serverDetailContent.replaceChildren(cardInfo.card);
   renderConsole(serverId, true);
+  requestLaunchConfig(serverId, cardInfo.launchNotice);
 
   window.scrollTo({
     top: 0,
@@ -150,6 +151,17 @@ const sendWebSocketTell = (tell) => {
     setNotice('WebSocket への送信に失敗しました。');
     return false;
   }
+};
+
+/** Java・JVM設定を取得し、対象カードの入力欄へ反映する。 */
+const requestLaunchConfig = (serverId, notice) => {
+  const sent = sendWebSocketTell({ type: 'launch-config-get', serverId });
+  if (typeof notice === 'undefined') return sent;
+
+  notice.textContent = sent
+    ? 'Java・JVM設定を読み込んでいます。'
+    : 'Java・JVM設定を読み込めませんでした。';
+  return sent;
 };
 
 /** 複数行のコンソール入力を検査して、コマンドバッチとして送信する。 */
@@ -468,6 +480,49 @@ const updateServerConfigEditability = (cardInfo, status) => {
   cardInfo.configSaveButton.disabled = !canEdit;
 };
 
+/** JavaランタイムとJVM引数の設定を入力欄へ反映する。 */
+const renderLaunchConfig = (serverId, config) => {
+  const cardInfo = serverCards.get(serverId);
+  if (
+    typeof cardInfo === 'undefined'
+    || typeof config !== 'object'
+    || config === null
+    || typeof config.revision !== 'string'
+    || typeof config.javaRuntime !== 'string'
+    || typeof config.maxHeap !== 'string'
+    || typeof config.initialHeap !== 'string'
+    || typeof config.extraArgs !== 'string'
+  ) return;
+
+  const canEdit = cardInfo.lastServerStatus !== null
+    && !cardInfo.lastServerStatus.processAlive;
+  const wasSavePending = cardInfo.launchSavePending;
+
+  cardInfo.javaRuntimeInput.value = config.javaRuntime;
+  cardInfo.maxHeapInput.value = config.maxHeap;
+  cardInfo.initialHeapInput.value = config.initialHeap;
+  cardInfo.extraArgsInput.value = config.extraArgs;
+  cardInfo.launchRevision = config.revision;
+  cardInfo.launchSavePending = false;
+  updateLaunchConfigEditability(cardInfo, cardInfo.lastServerStatus);
+  cardInfo.launchNotice.textContent = wasSavePending
+    ? 'Java・JVM設定を保存しました。次回起動時から反映されます。'
+    : canEdit
+      ? 'サーバー停止中のみ編集・保存できます。変更は次回起動時から反映されます。'
+      : 'サーバー稼働中はJava・JVM設定を変更できません。';
+};
+
+/** サーバー状態に応じて、Java・JVM設定の編集可否を切り替える。 */
+const updateLaunchConfigEditability = (cardInfo, status) => {
+  const canEdit = status !== null && !status.processAlive && cardInfo.launchRevision !== null;
+
+  cardInfo.javaRuntimeInput.readOnly = !canEdit;
+  cardInfo.maxHeapInput.readOnly = !canEdit;
+  cardInfo.initialHeapInput.readOnly = !canEdit;
+  cardInfo.extraArgsInput.readOnly = !canEdit;
+  cardInfo.launchSaveButton.disabled = !canEdit;
+};
+
 /** サーバー一覧メタデータから、ダッシュボード兼詳細画面用のカード群を再構築する。 */
 const renderServerList = (servers) => {
   serverCards.clear();
@@ -518,6 +573,20 @@ const renderServerList = (servers) => {
     const playersHeader = document.createElement('div');
     const playersTitle = document.createElement('h4');
     const playersList = document.createElement('ul');
+    const launchHeader = document.createElement('div');
+    const launchTitle = document.createElement('h4');
+    const launchReloadButton = document.createElement('button');
+    const launchSaveButton = document.createElement('button');
+    const launchFields = document.createElement('form');
+    const javaRuntimeLabel = document.createElement('label');
+    const javaRuntimeInput = document.createElement('input');
+    const maxHeapLabel = document.createElement('label');
+    const maxHeapInput = document.createElement('input');
+    const initialHeapLabel = document.createElement('label');
+    const initialHeapInput = document.createElement('input');
+    const extraArgsLabel = document.createElement('label');
+    const extraArgsInput = document.createElement('textarea');
+    const launchNotice = document.createElement('p');
     const configHeader = document.createElement('div');
     const configTitle = document.createElement('h4');
     const configReloadButton = document.createElement('button');
@@ -879,6 +948,62 @@ const renderServerList = (servers) => {
     playersTitle.textContent = 'ログイン中のプレイヤー';
     playersHeader.append(playersTitle);
     playersList.className = 'server-player-list server-card__detail-only';
+    launchHeader.className = 'server-card__section-header server-card__detail-only';
+    launchTitle.textContent = 'Java・JVM 設定';
+    launchReloadButton.type = 'button';
+    setButtonContent(launchReloadButton, '設定を読み込む', 'refresh');
+    launchReloadButton.addEventListener('click', () => {
+      requestLaunchConfig(server.id, launchNotice);
+    });
+    launchSaveButton.type = 'button';
+    setButtonContent(launchSaveButton, '保存', 'save');
+    launchSaveButton.disabled = true;
+    launchSaveButton.addEventListener('click', () => {
+      const cardInfo = serverCards.get(server.id);
+      if (typeof cardInfo === 'undefined' || cardInfo.launchRevision === null) return;
+
+      const sent = sendWebSocketTell({
+        type: 'launch-config-set', serverId: server.id,
+        revision: cardInfo.launchRevision,
+        launch: {
+          javaRuntime: javaRuntimeInput.value,
+          maxHeap: maxHeapInput.value,
+          initialHeap: initialHeapInput.value,
+          extraArgs: extraArgsInput.value,
+        },
+      });
+      if (!sent) {
+        launchNotice.textContent = 'Java・JVM設定を保存できませんでした。';
+        return;
+      }
+      cardInfo.launchSavePending = true;
+      launchSaveButton.disabled = true;
+      launchNotice.textContent = 'Java・JVM設定を保存しています。';
+    });
+    launchHeader.append(launchTitle, launchReloadButton, launchSaveButton);
+    launchFields.className = 'server-launch-fields server-card__detail-only';
+    javaRuntimeLabel.textContent = 'Java ランタイム（実行ファイルの絶対パス、または JDK8 / JDK17 / JDK21）';
+    javaRuntimeInput.type = 'text';
+    javaRuntimeInput.placeholder = '/usr/lib/jvm/.../bin/java';
+    javaRuntimeInput.readOnly = true;
+    javaRuntimeLabel.append(javaRuntimeInput);
+    maxHeapLabel.textContent = '最大ヒープサイズ（-Xmx）';
+    maxHeapInput.type = 'text';
+    maxHeapInput.placeholder = '例: 8G';
+    maxHeapInput.readOnly = true;
+    maxHeapLabel.append(maxHeapInput);
+    initialHeapLabel.textContent = '初期ヒープサイズ（-Xms）';
+    initialHeapInput.type = 'text';
+    initialHeapInput.placeholder = '例: 4G';
+    initialHeapInput.readOnly = true;
+    initialHeapLabel.append(initialHeapInput);
+    extraArgsLabel.textContent = '追加 JVM 引数';
+    extraArgsInput.rows = 4;
+    extraArgsInput.placeholder = '例: -XX:+UseG1GC -XX:MaxGCPauseMillis=200';
+    extraArgsInput.readOnly = true;
+    extraArgsLabel.append(extraArgsInput);
+    launchFields.append(javaRuntimeLabel, maxHeapLabel, initialHeapLabel, extraArgsLabel);
+    launchNotice.className = 'server-card__notice server-card__detail-only';
     configHeader.className = 'server-card__section-header server-card__detail-only';
     configTitle.textContent = 'サーバー設定';
     configReloadButton.type = 'button';
@@ -991,6 +1116,9 @@ const renderServerList = (servers) => {
       scheduleHeader,
       scheduleList,
       scheduleEditor,
+      launchHeader,
+      launchFields,
+      launchNotice,
       configHeader,
       configMeta,
       configFields,
@@ -1013,6 +1141,14 @@ const renderServerList = (servers) => {
       linkedList,
       playerStatus: playerStatus.value,
       playersList,
+      launchNotice,
+      launchRevision: null,
+      launchSaveButton,
+      launchSavePending: false,
+      javaRuntimeInput,
+      maxHeapInput,
+      initialHeapInput,
+      extraArgsInput,
       configMeta,
       configFields,
       configNotice,
@@ -1092,6 +1228,7 @@ const updateServerStatus = (serverId, status) => {
   cardInfo.lastServerStatus = status;
   updateServerControlButtons(cardInfo, status);
   updateServerConfigEditability(cardInfo, status);
+  updateLaunchConfigEditability(cardInfo, status);
   updateProxyLinkedServerStatuses();
 };
 
@@ -1578,6 +1715,30 @@ const connectWebSocket = async () => {
         }
         if (message.type === 'config-content') {
           renderServerConfig(message.serverId, message.config);
+          return;
+        }
+        if (message.type === 'launch-config-content') {
+          renderLaunchConfig(message.serverId, message.config);
+          return;
+        }
+        if (message.type === 'launch-config-rejected') {
+          const cardInfo = serverCards.get(message.serverId);
+
+          if (typeof cardInfo !== 'undefined') {
+            const errors = {
+              server_not_found: '対象サーバーが見つかりません。',
+              launch_server_running: 'サーバー稼働中はJava・JVM設定を保存できません。',
+              launch_conflict: 'Java・JVM設定が更新されています。再読込してください。',
+              launch_invalid_update: 'JavaランタイムまたはJVM引数の形式が不正です。',
+            };
+            cardInfo.launchSavePending = false;
+            if (cardInfo.lastServerStatus !== null) {
+              updateLaunchConfigEditability(cardInfo, cardInfo.lastServerStatus);
+            }
+            cardInfo.launchNotice.textContent =
+              errors[message.error] ?? 'Java・JVM設定を読み込めませんでした。';
+          }
+
           return;
         }
         if (message.type === 'config-rejected') {

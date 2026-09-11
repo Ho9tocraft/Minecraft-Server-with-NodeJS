@@ -1,4 +1,5 @@
 import { format } from 'date-fns';
+import { createHash } from 'crypto';
 import { type as OSType } from 'os';
 import { ChildProcess, spawn } from 'child_process';
 import { TextDecoder } from 'util';
@@ -57,6 +58,25 @@ export type ServerMetadata = Readonly<{
 }>;
 export type ScheduleOverrideInput = Readonly<{ useOverride: boolean, motd: string, exec: string }>;
 export type ServerScheduleUpdate = Readonly<{ start: string, reboot: ScheduleOverrideInput, shutdown: ScheduleOverrideInput }>;
+export type ServerLaunchConfig = Readonly<{
+  revision: string,
+  javaRuntime: string,
+  maxHeap: string,
+  initialHeap: string,
+  extraArgs: string,
+}>;
+export type ServerLaunchConfigUpdate = Readonly<{
+  javaRuntime: string,
+  maxHeap: string,
+  initialHeap: string,
+  extraArgs: string,
+}>;
+export type ServerLaunchConfigErrorCode = 'launch_server_running' | 'launch_conflict' | 'launch_invalid_update';
+export class ServerLaunchConfigError extends Error {
+  public constructor(public readonly code: ServerLaunchConfigErrorCode) {
+    super(code);
+  }
+}
 
 type searchResultInfo = {
   idx: number;
@@ -72,6 +92,37 @@ const RConIdleTimeout = 15 * 60 * 1000;
 const ConsoleDefinition = {
   MaxHistoryRecord: 400,
   MaxMessageChars: MaxCommandPacketLength,
+};
+
+const normalizeJavaRuntime = (value: string): string => {
+  const runtime = value.trim();
+  if (runtime.length === 0 || runtime.length > 1024 || /[\u0000-\u001F\u007F]/.test(runtime)) {
+    throw new ServerLaunchConfigError('launch_invalid_update');
+  }
+  return runtime;
+};
+
+const parseMemoryArgument = (value: string): JVMMemoryAllocProperty => {
+  const match = value.trim().match(/^([1-9][0-9]{0,6})([MG])$/i);
+  if (match === null) throw new ServerLaunchConfigError('launch_invalid_update');
+
+  const amount = Number(match[1]);
+  const unit = match[2]?.toUpperCase();
+  if (!Number.isSafeInteger(amount) || (unit !== 'M' && unit !== 'G')) {
+    throw new ServerLaunchConfigError('launch_invalid_update');
+  }
+  return { amount, unit };
+};
+
+const toMiB = (value: JVMMemoryAllocProperty): number => {
+  return value.unit === 'G' ? value.amount * 1024 : value.amount;
+};
+
+const normalizeExtraArguments = (value: string): string => {
+  if (value.length > 2048 || /[\u0000-\u001F\u007F]/.test(value)) {
+    throw new ServerLaunchConfigError('launch_invalid_update');
+  }
+  return value.trim().replace(/\s+/g, ' ');
 };
 
 export abstract class MinecraftServerBase extends EventEmitter {
@@ -427,6 +478,54 @@ export abstract class MinecraftServerBase extends EventEmitter {
 
     this.mayMaintenance = enabled;
     this.writeCurrentJSONProcStat();
+  }
+  /** WebUI用の、次回起動時に使うJavaランタイムとJVM引数を返す。 */
+  public getLaunchConfig(): ServerLaunchConfig {
+    const { jvmPath, jvmArgs } = this.currentJSONStat.work;
+    const maxHeap = `${jvmArgs.memory.Xmx.amount}${jvmArgs.memory.Xmx.unit}`;
+    const initialHeap = `${jvmArgs.memory.Xms.amount}${jvmArgs.memory.Xms.unit}`;
+    const revisionData = JSON.stringify({ jvmPath, maxHeap, initialHeap, extra: jvmArgs.extra });
+
+    return Object.freeze({
+      revision: createHash('sha256').update(revisionData).digest('hex'),
+      javaRuntime: jvmPath,
+      maxHeap,
+      initialHeap,
+      extraArgs: jvmArgs.extra,
+    });
+  }
+  /** 停止中に限り、次回起動で使うJavaランタイムとJVM引数を更新して永続化する。 */
+  public updateLaunchConfig(revision: string, update: ServerLaunchConfigUpdate): ServerLaunchConfig {
+    if (this.getServStatus().processAlive) throw new ServerLaunchConfigError('launch_server_running');
+    if (revision !== this.getLaunchConfig().revision) throw new ServerLaunchConfigError('launch_conflict');
+
+    const javaRuntime = normalizeJavaRuntime(update.javaRuntime);
+    const maxMemory = parseMemoryArgument(update.maxHeap);
+    const initialMemory = parseMemoryArgument(update.initialHeap);
+    const extraArgs = normalizeExtraArguments(update.extraArgs);
+    if (toMiB(initialMemory) > toMiB(maxMemory)) throw new ServerLaunchConfigError('launch_invalid_update');
+
+    let javaBinPath: string;
+    try {
+      javaBinPath = buildExecBinEnv(this.buildJVMBinPath(javaRuntime));
+    } catch {
+      throw new ServerLaunchConfigError('launch_invalid_update');
+    }
+    const { jarFile, jarArgs } = this.currentJSONStat.work;
+    const javaBinArgs = this.buildLaunchCode(
+      this.combineJVMArgs(this.buildMemoryArgs(maxMemory, initialMemory), extraArgs, jarFile, jarArgs),
+    );
+
+    this.currentJSONStat.work.jvmPath = javaRuntime;
+    this.currentJSONStat.work.jvmArgs = {
+      memory: { Xmx: maxMemory, Xms: initialMemory },
+      extra: extraArgs,
+    };
+    this.javaBinPath = javaBinPath;
+    this.javaBinArgs = javaBinArgs;
+    this.writeCurrentJSONProcStat(true);
+
+    return this.getLaunchConfig();
   }
   public setScheduleConfig(schedule: ServerScheduleUpdate): void {
     const normalizeCron = (value: unknown, fieldName: string): string => {
@@ -1409,6 +1508,7 @@ const compareServerJSONInfo = (base: MinecraftServerData, comp: MinecraftServerD
   type checkJSON = Readonly<{
     name: string,
     work: {
+      jvmPath: string,
       jvmArgs: {
         memory: {
           Xmx: JVMMemoryAllocProperty,
@@ -1443,6 +1543,7 @@ const compareServerJSONInfo = (base: MinecraftServerData, comp: MinecraftServerD
   const bJSONTgt: checkJSON = {
     name: base.name,
     work: {
+      jvmPath: base.work.jvmPath,
       jvmArgs: base.work.jvmArgs,
       jarFile: base.work.jarFile,
       jarArgs: base.work.jarArgs,
@@ -1453,6 +1554,7 @@ const compareServerJSONInfo = (base: MinecraftServerData, comp: MinecraftServerD
   const cJSONTgt: checkJSON = {
     name: comp.name,
     work: {
+      jvmPath: comp.work.jvmPath,
       jvmArgs: comp.work.jvmArgs,
       jarFile: comp.work.jarFile,
       jarArgs: comp.work.jarArgs,

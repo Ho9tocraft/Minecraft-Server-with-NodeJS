@@ -3,6 +3,10 @@ import { type Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
   type MinecraftServerBase,
+  ServerLaunchConfigError,
+  type ServerLaunchConfig,
+  type ServerLaunchConfigErrorCode,
+  type ServerLaunchConfigUpdate,
   type RConStatusSnapshot,
   type ScheduleOverrideInput,
   type ServerConsoleMessage,
@@ -54,6 +58,8 @@ type MCSCWebSocketMessage =
   | Readonly<{ type: 'schedule-rejected', serverId: string, error: 'invalid_schedule' | MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'config-content', serverId: string, config: ServerConfigSnapshot }>
   | Readonly<{ type: 'config-rejected', serverId: string, error: ServerConfigReadErrorCode | MCSCWSServerErrorMsg }>
+  | Readonly<{ type: 'launch-config-content', serverId: string, config: ServerLaunchConfig }>
+  | Readonly<{ type: 'launch-config-rejected', serverId: string, error: ServerLaunchConfigErrorCode | MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'command-submitted', serverId: string, commandCount: number }>
   | Readonly<{ type: 'command-rejected', serverId: string, error: 'invalid_message' | MCSCWSServerErrorMsg }>
   | Readonly<{ type: 'request-rejected', error: 'invalid_message' }>
@@ -66,6 +72,8 @@ type MCSCWebSocketMaintenanceSet = Readonly<{ type: 'maintenance-set', serverId:
 type MCSCWebSocketScheduleSet = Readonly<{ type: 'schedule-set', serverId: string, schedule: ServerScheduleUpdate }>;
 type MCSCWebSocketConfigGet = Readonly<{ type: 'config-get', serverId: string }>;
 type MCSCWebSocketConfigSet = Readonly<{ type: 'config-set', serverId: string, revision: string, changes: readonly ServerConfigChange[] }>;
+type MCSCWebSocketLaunchConfigGet = Readonly<{ type: 'launch-config-get', serverId: string }>;
+type MCSCWebSocketLaunchConfigSet = Readonly<{ type: 'launch-config-set', serverId: string, revision: string, update: ServerLaunchConfigUpdate }>;
 type MCSCWebSocketIncomingTell =
   | MCSCWebSocketCmdBatch
   | MCSCWebSocketRConDisconnect
@@ -73,6 +81,8 @@ type MCSCWebSocketIncomingTell =
   | MCSCWebSocketScheduleSet
   | MCSCWebSocketConfigGet
   | MCSCWebSocketConfigSet
+  | MCSCWebSocketLaunchConfigGet
+  | MCSCWebSocketLaunchConfigSet
   | MCSCWebSocketServerControl;
 type HTTPErrorCodeText = // めんどくせーのでここでエラーコード列挙させろォ！
   | '400 Bad Request'
@@ -149,6 +159,16 @@ const isServerScheduleUpdate = (
   );
 };
 
+const isServerLaunchConfigUpdate = (value: unknown): value is ServerLaunchConfigUpdate => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+
+  return typeof input.javaRuntime === 'string' && input.javaRuntime.length <= 1024
+    && typeof input.maxHeap === 'string' && input.maxHeap.length <= 16
+    && typeof input.initialHeap === 'string' && input.initialHeap.length <= 16
+    && typeof input.extraArgs === 'string' && input.extraArgs.length <= 2048;
+};
+
 const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSocketIncomingTell | null => {
   if (isBin) return null;
   let rawMsg: string;
@@ -165,7 +185,7 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
   if (typeof parsedMsg !== 'object' || parsedMsg === null || Array.isArray(parsedMsg)) return null;
 
   const msg = parsedMsg as Record<string, unknown>;
-  const { action: act, changes, cmds, enabled, revision, schedule: cron, serverId, type } = msg;
+  const { action: act, changes, cmds, enabled, revision, schedule: cron, launch, serverId, type } = msg;
 
   if (typeof serverId !== 'string' || serverId.length === 0 || serverId.length > 128) return null;
 
@@ -212,6 +232,23 @@ const parseIncomingTell = (data: WebSocket.RawData, isBin: boolean): MCSCWebSock
         key: (change as ServerConfigChange).key,
         value: (change as ServerConfigChange).value,
       }))),
+    });
+  }
+  if (type === 'launch-config-get') return Object.freeze({
+    type: 'launch-config-get',
+    serverId,
+  });
+  if (type === 'launch-config-set' && typeof revision === 'string' && /^[a-f0-9]{64}$/.test(revision)
+    && isServerLaunchConfigUpdate(launch)) {
+    const update = launch as ServerLaunchConfigUpdate;
+    return Object.freeze({
+      type: 'launch-config-set', serverId, revision,
+      update: Object.freeze({
+        javaRuntime: update.javaRuntime,
+        maxHeap: update.maxHeap,
+        initialHeap: update.initialHeap,
+        extraArgs: update.extraArgs,
+      }),
     });
   }
   if (type === 'server-control' && (act === 'start' || act === 'stop' || act === 'restart')) return Object.freeze({
@@ -279,6 +316,38 @@ const handleConfigSet = async (socket: WebSocket, request: MCSCWebSocketConfigSe
     sendMessage(socket, {
       type: 'config-rejected', serverId: targetServer.srvId,
       error: error instanceof ServerConfigReadError ? error.code : 'config_read_failed',
+    });
+  }
+};
+
+const handleLaunchConfigGet = (socket: WebSocket, request: MCSCWebSocketLaunchConfigGet, servers: readonly MinecraftServerBase[]): void => {
+  const targetServer = servers.find((server) => server.srvId === request.serverId);
+  if (typeof targetServer === 'undefined') {
+    sendMessage(socket, { type: 'launch-config-rejected', serverId: request.serverId, error: 'server_not_found' });
+    return;
+  }
+
+  sendMessage(socket, {
+    type: 'launch-config-content',
+    serverId: targetServer.srvId,
+    config: targetServer.getLaunchConfig(),
+  });
+};
+
+const handleLaunchConfigSet = (socket: WebSocket, request: MCSCWebSocketLaunchConfigSet, servers: readonly MinecraftServerBase[]): void => {
+  const targetServer = servers.find((server) => server.srvId === request.serverId);
+  if (typeof targetServer === 'undefined') {
+    sendMessage(socket, { type: 'launch-config-rejected', serverId: request.serverId, error: 'server_not_found' });
+    return;
+  }
+
+  try {
+    const config = targetServer.updateLaunchConfig(request.revision, request.update);
+    sendMessage(socket, { type: 'launch-config-content', serverId: targetServer.srvId, config });
+  } catch (error) {
+    sendMessage(socket, {
+      type: 'launch-config-rejected', serverId: targetServer.srvId,
+      error: error instanceof ServerLaunchConfigError ? error.code : 'launch_invalid_update',
     });
   }
 };
@@ -484,6 +553,12 @@ const handleIncomingTell = (socket: WebSocket, data: WebSocket.RawData, isBin: b
       break;
     case 'config-set':
       void handleConfigSet(socket, incomingTell, servers);
+      break;
+    case 'launch-config-get':
+      handleLaunchConfigGet(socket, incomingTell, servers);
+      break;
+    case 'launch-config-set':
+      handleLaunchConfigSet(socket, incomingTell, servers);
       break;
     case 'server-control':
       handleServControl(socket, incomingTell, servers);

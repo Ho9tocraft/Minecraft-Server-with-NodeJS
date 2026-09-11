@@ -461,6 +461,21 @@ label {
   padding-bottom: 1rem;
 }
 
+.server-launch-fields > label {
+  display: grid;
+  gap: 0.35rem;
+  color: #1d2327;
+  font-weight: 600;
+}
+
+.server-launch-fields input,
+.server-launch-fields textarea {
+  box-sizing: border-box;
+  width: 100%;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-weight: 400;
+}
+
 .server-card form p,
 .server-card > p:last-child {
   min-height: 1.4rem;
