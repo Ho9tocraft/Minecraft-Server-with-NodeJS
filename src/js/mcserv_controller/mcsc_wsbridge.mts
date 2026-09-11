@@ -626,6 +626,10 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
     const onConsoleOut = (entry: ServerConsoleMessage): void => {
       queueConsoleEntry(server.srvId, entry);
     };
+    const onConsoleHistoryCleared = (): void => {
+      pendingConsoleEntries.delete(server.srvId);
+      sendMessage(socket, { type: 'console-history', serverId: server.srvId, entries: [] });
+    };
     const onRConStatus = (status: RConStatusSnapshot): void => {
       sendMessage(socket, { type: 'rcon-status', serverId: server.srvId, status: status });
     };
@@ -644,6 +648,7 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
     };
 
     server.on('console-output', onConsoleOut);
+    server.on('console-history-cleared', onConsoleHistoryCleared);
     server.on('rcon-status', onRConStatus);
     server.on('server-status', onServerStatus);
     server.on('player-status', onPlayerStatus);
@@ -651,6 +656,7 @@ const subscribeServerEvents = (socket: WebSocket, servers: readonly MinecraftSer
 
     unsubscribeFunc.push(() => {
       server.off('console-output', onConsoleOut);
+      server.off('console-history-cleared', onConsoleHistoryCleared);
       server.off('rcon-status', onRConStatus);
       server.off('server-status', onServerStatus);
       server.off('player-status', onPlayerStatus);

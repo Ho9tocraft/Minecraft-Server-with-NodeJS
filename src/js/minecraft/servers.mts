@@ -468,6 +468,7 @@ export abstract class MinecraftServerBase extends EventEmitter {
   }
   public restartServer(): void {
     if (this.serverProc === null || this.runningStat !== 'RUNNING') return;
+    this.clearConsoleHistory();
     this.requestFlag.reboot = true;
     this.stopServer();
   }
@@ -784,6 +785,11 @@ export abstract class MinecraftServerBase extends EventEmitter {
   }
   public getConsoleHistory(): readonly ServerConsoleMessage[] {
     return this.consoleHistory.slice();
+  }
+  /** 再起動開始時にWebUI用のコンソール履歴を破棄し、接続中の画面へ通知する。 */
+  protected clearConsoleHistory(): void {
+    this.consoleHistory = [];
+    this.emit('console-history-cleared');
   }
   /* ---- SERVER DATA BUILD ---- */
   protected rebuildPrevServerJSON(): MinecraftServerData {
